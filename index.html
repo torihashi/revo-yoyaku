@@ -1686,6 +1686,8 @@ function startAutoSync() {
   if (autoSyncTimer) return;
   autoSyncTimer = setInterval(function() {
     if (!isWebhookConfigured()) return;
+    // 画面非表示中はスキップ（バッテリ・通信節約）
+    if (document.hidden) return;
     const listTab    = document.getElementById('tab-list');
     const seatmapTab = document.getElementById('tab-seatmap');
     const visible = (listTab && !listTab.classList.contains('hidden'))
@@ -1871,9 +1873,22 @@ function loadReservations() {
 }
 reservations = loadReservations();
 
+let _saveTimer = null;
 function saveReservations() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations)); } catch (e) {}
+  // 200msデバウンス：連続操作時の I/O 削減
+  if (_saveTimer) clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(function() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations)); } catch (e) {}
+    _saveTimer = null;
+  }, 200);
 }
+// アプリ離脱時は確実に保存
+window.addEventListener('beforeunload', function() {
+  if (_saveTimer) {
+    clearTimeout(_saveTimer);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations)); } catch (e) {}
+  }
+});
 
 function genId(seq) {
   const d = new Date();
@@ -3860,7 +3875,17 @@ function initSeatMap() {
   renderSeatMap();
 }
 
+// 隠れているタブの座席表は描画しない（無駄なDOM更新を防止）
+let _renderSeatMapRaf = null;
 function renderSeatMap() {
+  // 連続呼び出しは1フレームにまとめる
+  if (_renderSeatMapRaf) return;
+  _renderSeatMapRaf = requestAnimationFrame(function() {
+    _renderSeatMapRaf = null;
+    _renderSeatMapImpl();
+  });
+}
+function _renderSeatMapImpl() {
   const date = smState.date;
   const time = smState.time;
   // 当日の有効予約（キャンセル除外、お土産除外）— 現在の店舗のみ
@@ -3965,15 +3990,12 @@ function renderTakeoutRail(date) {
       slot.classList.add('empty');
       slot.innerHTML = '<div class="meta">＋ 新規<br><span style="font-size:9px">（お土産）</span></div>';
       slot.onclick = function() {
-        // 座席表で表示中の日付でお土産予約を開始
+        // 座席表で表示中の日付でお土産予約を開始（確認なし即実行）
         const targetDate = date || todayStr();
-        if (confirm(targetDate + ' のお土産予約を入れますか？\n（お土産フローに移動します）')) {
-          // resDate に日付をセットして startTakeoutFlow を呼ぶ
-          switchTab('new');
-          const dateInp = document.getElementById('resDate');
-          if (dateInp) dateInp.value = targetDate;
-          if (typeof startTakeoutFlow === 'function') startTakeoutFlow();
-        }
+        switchTab('new');
+        const dateInp = document.getElementById('resDate');
+        if (dateInp) dateInp.value = targetDate;
+        if (typeof startTakeoutFlow === 'function') startTakeoutFlow();
       };
     }
     rail.appendChild(slot);
@@ -4072,16 +4094,15 @@ function renderUnassignedRail(dayRes) {
           cancelMoveMode();
           return;
         }
-        // それ以外：新規予約（席=未設定）を入れるフローへ
+        // それ以外：席未設定で新規予約フロー（確認なし即実行）
         const date = smState.date || todayStr();
-        if (confirm('席未設定で新規予約を入れますか？\n（新規予約タブに移動します）')) {
-          state.date = date;
-          state.preselectedSeat = '未設定';
-          switchTab('new');
-          const dateInp = document.getElementById('resDate');
-          if (dateInp) dateInp.value = date;
-          if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
-        }
+        state.date = date;
+        state.preselectedSeat = '未設定';
+        switchTab('new');
+        const dateInp = document.getElementById('resDate');
+        if (dateInp) dateInp.value = date;
+        if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+        autoAdvanceFromSeatMap();
       };
     }
     rail.appendChild(slot);
@@ -4113,23 +4134,47 @@ function handleSeatClick(seatId) {
     });
     return;
   }
-  // 空席 → 新規予約モーダル風に遷移（既存の新規予約フローへ移動して席をプリセット）
-  if (confirm('卓 ' + seatId + ' に新規予約を入れますか？\n（新規予約タブに移動します）')) {
-    state.date = date;
-    state.time = time;
-    state.candidateSeats = [{ tables: seatId, area: '', min: 1, max: 99 }];
-    state.preselectedSeat = seatId;
-    switchTab('new');
-    // フォームに反映
-    const dateInp = document.getElementById('resDate');
-    if (dateInp) dateInp.value = date;
-    document.querySelectorAll('#resTimeGrid .time-btn').forEach(function(b) {
-      b.classList.toggle('selected', b.getAttribute('data-time') === time);
-      if (b.getAttribute('data-time') === time) state.time = time;
-    });
-    // プリセット席バナーを表示
-    updatePreselectBanner();
-  }
+  // 空席 → 確認なしで即座に新規予約フローへ
+  state.date = date;
+  state.time = time;
+  state.candidateSeats = [{ tables: seatId, area: '', min: 1, max: 99 }];
+  state.preselectedSeat = seatId;
+  switchTab('new');
+  // フォームに反映
+  const dateInp = document.getElementById('resDate');
+  if (dateInp) dateInp.value = date;
+  document.querySelectorAll('#resTimeGrid .time-btn').forEach(function(b) {
+    b.classList.toggle('selected', b.getAttribute('data-time') === time);
+    if (b.getAttribute('data-time') === time) state.time = time;
+  });
+  // プリセット席バナー表示 ＋ 自動で空き判定 ＋ 名前欄フォーカス
+  updatePreselectBanner();
+  autoAdvanceFromSeatMap();
+}
+
+// 座席表から飛んできた時、即座に空き判定 → 時刻を選択して、人数入力欄にフォーカス
+function autoAdvanceFromSeatMap() {
+  // ① 空き判定を即実行（時刻スロットを描画）
+  setTimeout(function() {
+    if (typeof checkAvailability === 'function') {
+      try { checkAvailability(); } catch (e) {}
+    }
+    // ② 既存時刻があれば自動選択
+    setTimeout(function() {
+      if (state.time) {
+        const btn = document.querySelector('#slotGrid .time-btn[data-time="' + state.time + '"]');
+        if (btn) {
+          btn.click();
+        }
+      }
+      // ③ 人数欄にフォーカス
+      const peopleInp = document.getElementById('resPeople');
+      if (peopleInp) {
+        peopleInp.focus();
+        peopleInp.select();
+      }
+    }, 150);
+  }, 50);
 }
 
 // 座席表から渡された席をクリア（おまかせに戻す）
