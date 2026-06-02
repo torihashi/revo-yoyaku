@@ -788,16 +788,6 @@ button.secondary:active { background: var(--primary); color: white; }
     <textarea id="notes" rows="2" placeholder="アレルギー・お祝い・ベビーカー等"></textarea>
   </div>
 
-  <div class="field">
-    <label>手書きメモ（指で書く）</label>
-    <div class="handwrite-box">
-      <canvas id="memoCanvas"></canvas>
-      <div class="hw-tools">
-        <button type="button" onclick="clearHandwriting('memoCanvas')">クリア</button>
-      </div>
-    </div>
-  </div>
-
   <button class="primary" onclick="confirmReservation()">予約内容を確認</button>
   <button class="secondary" onclick="backToStep1()">← 空き確認に戻る</button>
 </div>
@@ -850,16 +840,6 @@ button.secondary:active { background: var(--primary); color: white; }
   <div class="field">
     <label>備考</label>
     <textarea id="takeoutNotes" rows="2" placeholder="アレルギー・ご要望など"></textarea>
-  </div>
-
-  <div class="field">
-    <label>手書きメモ（指で書く）</label>
-    <div class="handwrite-box">
-      <canvas id="takeoutMemoCanvas"></canvas>
-      <div class="hw-tools">
-        <button type="button" onclick="clearHandwriting('takeoutMemoCanvas')">クリア</button>
-      </div>
-    </div>
   </div>
 
   <button class="primary" onclick="confirmTakeout()">予約内容を確認</button>
@@ -2265,9 +2245,31 @@ function findSeatCandidates(people, date, time) {
 
   return getReservationCandidates().filter(c => {
     if (people < c.min || people > c.max) return false;
-    // 使用中の席と被らないかをざっくりチェック
-    const tablesInUse = c.tables.split(/[+〜、]/).some(t => usedTables.has(t.trim()));
-    return !tablesInUse;
+    // 席パターン分類：
+    //   "+" を含む → 結合席（全卓必須） → どれか使用中なら除外
+    //   "〜" を含む → レンジ席（複数候補から1つ） → すべて使用中の時のみ除外
+    //   それ以外 → 単卓 → その卓が使用中なら除外
+    const tablesStr = c.tables;
+    if (tablesStr.indexOf('+') >= 0) {
+      // 結合席：すべての卓が必要
+      const required = tablesStr.split('+').map(function(s) { return s.trim().replace(/\s.*/, ''); });
+      return !required.some(t => usedTables.has(t));
+    }
+    if (tablesStr.indexOf('〜') >= 0) {
+      // レンジ：例「1〜6 単卓」「11〜18」 → 範囲内に1つでも空きがあればOK
+      // 数字レンジを抽出
+      const m = tablesStr.match(/(\d+)\s*〜\s*(\d+)/);
+      if (m) {
+        const lo = parseInt(m[1], 10);
+        const hi = parseInt(m[2], 10);
+        for (let i = lo; i <= hi; i++) {
+          if (!usedTables.has(String(i))) return true;
+        }
+        return false;
+      }
+    }
+    // 単卓
+    return !usedTables.has(tablesStr.trim());
   });
 }
 
@@ -2520,7 +2522,8 @@ function submitReservation() {
         }
       }
     }
-    const title = '⚪ ' + courseText + data.people + '名、' + data.name + '様、' + data.seat;
+    // PWA直接入力の予約は印無し（Yahoo=⚫ / AutoReserve=◾️ のみマーク付与）
+    const title = courseText + data.people + '名、' + data.name + '様、' + data.seat;
     const startStr = data.date + 'T' + data.time + ':00+09:00';
     const startDate = new Date(startStr);
     const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
@@ -2567,11 +2570,17 @@ function submitReservation() {
       <p style="text-align:center; color:var(--muted); margin:0 0 16px">
         予約番号<br><strong style="font-size:18px;color:var(--primary-dark)">${data.id}</strong>
       </p>
-      <button class="primary" onclick="closeModalAndReset()">続けて予約する</button>
+      <button class="primary" onclick="closeModalAndShowSeatmap()">🪑 座席表に戻る</button>
+      <button class="secondary" onclick="closeModalAndReset()">続けて予約する</button>
       <button class="secondary" onclick="closeModalAndShowList()">本日の予約を見る</button>
     </div>`;
   document.body.appendChild(overlay);
   state.activeOverlay = overlay;
+}
+
+function closeModalAndShowSeatmap() {
+  closeModalAndReset();
+  switchTab('seatmap');
 }
 
 function closeModalAndReset() {
@@ -3192,7 +3201,10 @@ function openTakeoutEditModal(resId) {
 //       席だけはコース部分を省略 → ⚪ {人数}名、{お名前}様、{席番号}
 // ============================================================
 function buildEventTitle(r) {
-  const prefix = r.source === 'yahoo' ? '⚫' : (r.source === 'autoreserve' ? '◾️' : '⚪');
+  // PWA直接入力(pwa) は印なし、Yahoo=⚫ / AutoReserve=◾️ のみ
+  const prefix = r.source === 'yahoo' ? '⚫ '
+              : r.source === 'autoreserve' ? '◾️ '
+              : '';
   const c = COURSES.concat(REVO_COURSES).find(function(x) { return x.id === r.course; });
   let courseText = '';
   if (c) {
@@ -3207,7 +3219,7 @@ function buildEventTitle(r) {
       }
     }
   }
-  return prefix + ' ' + courseText + r.people + '名、' + r.name + '様、' + (r.seat || '当日');
+  return prefix + courseText + r.people + '名、' + r.name + '様、' + (r.seat || '当日');
 }
 
 // ============================================================
@@ -3691,7 +3703,8 @@ function submitTakeout() {
     + '<h3 style="text-align:center">お土産予約を承りました</h3>'
     + '<p style="text-align:center;color:var(--muted);margin:0 0 16px">'
     + '予約番号<br><strong style="font-size:18px;color:var(--primary-dark)">' + data.id + '</strong></p>'
-    + '<button class="primary" onclick="closeTakeoutAndReset()">続けて予約する</button>'
+    + '<button class="primary" onclick="closeTakeoutAndShowSeatmap()">🪑 座席表に戻る</button>'
+    + '<button class="secondary" onclick="closeTakeoutAndReset()">続けて予約する</button>'
     + '<button class="secondary" onclick="closeTakeoutAndShowList()">予約一覧を見る</button>'
     + '</div>';
   document.body.appendChild(overlay);
@@ -3711,6 +3724,11 @@ function closeTakeoutAndReset() {
 function closeTakeoutAndShowList() {
   closeTakeoutAndReset();
   switchTab('list');
+}
+
+function closeTakeoutAndShowSeatmap() {
+  closeTakeoutAndReset();
+  switchTab('seatmap');
 }
 
 // ============================================================
@@ -3745,8 +3763,7 @@ function renderReservationList() {
                         : r.status === 'tentative' ? '仮押さえ' : 'キャンセル';
       const sourceMark = r.source === 'yahoo'       ? '⚫'
                        : r.source === 'autoreserve' ? '◾️'
-                       : r.source === 'pwa'         ? '⚪'
-                       :                              '・';
+                       :                              '';
       const sourceTitle = r.source === 'yahoo'       ? 'Yahoo!リザベ'
                         : r.source === 'autoreserve' ? 'AutoReserve'
                         : r.source === 'pwa'         ? 'PWA直接'
