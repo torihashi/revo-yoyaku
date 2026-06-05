@@ -2367,11 +2367,19 @@ function showSlotDetails(date, time, people) {
   html += '<button class="primary" id="proceedDetailBtn" style="margin-top:12px" onclick="proceedToStep2()">' + time + ' で詳細入力へ →</button>';
 
   document.getElementById('slotResult').innerHTML = html;
-  // 2) 時刻選択後、詳細入力ボタンへ自動スクロール
-  setTimeout(function() {
-    var btn = document.getElementById('proceedDetailBtn');
-    if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, 100);
+
+  // 空きがあれば自動的に詳細入力（step2）へ進む
+  if (slot.candidates.length > 0 && slot.cls !== 'full') {
+    setTimeout(function() {
+      try { proceedToStep2(); } catch (e) {}
+    }, 250);
+  } else {
+    // 満員なら詳細入力ボタンへ自動スクロール
+    setTimeout(function() {
+      var btn = document.getElementById('proceedDetailBtn');
+      if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 100);
+  }
 }
 
 function timeDiff(t1, t2) {
@@ -4406,6 +4414,38 @@ function renderCalendarGrid(container) {
       renderCalendarGrid(container);
     });
   });
+
+  // 横スワイプで前月／翌月（カレンダーグリッド領域内のみ）
+  const grid = container.querySelector('.cal-grid');
+  if (grid) {
+    let touchStartX = 0, touchStartY = 0, touchStarted = false;
+    grid.addEventListener('touchstart', function(e) {
+      if (e.touches.length !== 1) return;
+      touchStartX = e.touches[0].clientX;
+      touchStartY = e.touches[0].clientY;
+      touchStarted = true;
+    }, { passive: true });
+    grid.addEventListener('touchend', function(e) {
+      if (!touchStarted) return;
+      touchStarted = false;
+      const touch = e.changedTouches[0];
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
+      // 横方向の動き > 縦方向 & 50px以上スワイプ
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        if (dx < 0) {
+          // 左スワイプ → 翌月
+          state.month++;
+          if (state.month > 11) { state.month = 0; state.year++; }
+        } else {
+          // 右スワイプ → 前月
+          state.month--;
+          if (state.month < 0) { state.month = 11; state.year--; }
+        }
+        renderCalendarGrid(container);
+      }
+    }, { passive: true });
+  }
 }
 
 // 全カレンダーを初期化／再描画
