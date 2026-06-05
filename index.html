@@ -1255,23 +1255,38 @@ const HOLIDAYS = [
 const HOLIDAY_LAST_SYNC = '2026-05-05';
 const HOLIDAY_SOURCE_CAL = 'torihashi221631@gmail.com';
 
-// リボルバード休業日（同期元: revolbird372524@gmail.com）
-// 後でカレンダーから同期 → 配列を更新する
-const REVO_HOLIDAYS = [
-  // 例：{ date:'2026-05-XX', kind:'定休', reason:'お休み' },
-];
-const REVO_HOLIDAY_LAST_SYNC = '未同期';
+// リボルバード休業日（GAS経由で『リボ・営業カレンダー』から同期）
+let REVO_HOLIDAYS = [];
+let REVO_HOLIDAY_LAST_SYNC = '未同期';
 const REVO_HOLIDAY_SOURCE_CAL = 'リボ・営業カレンダー';
+
+// 鳥はし休業日もカレンダーから上書き同期できるよう let に変更
+let HOLIDAYS_LIVE = null; // null = ハードコード（HOLIDAYS）を使用、配列 = カレンダー同期版を使用
 
 // 現店舗に応じた休業日関連の getter
 function getHolidays() {
-  return currentStore === 'revolverd' ? REVO_HOLIDAYS : HOLIDAYS;
+  if (currentStore === 'revolverd') return REVO_HOLIDAYS;
+  // カレンダー同期版があればそれを優先、なければハードコード
+  return HOLIDAYS_LIVE && HOLIDAYS_LIVE.length > 0 ? HOLIDAYS_LIVE : HOLIDAYS;
 }
 function getHolidaySource() {
   return currentStore === 'revolverd' ? REVO_HOLIDAY_SOURCE_CAL : HOLIDAY_SOURCE_CAL;
 }
 function getHolidayLastSync() {
-  return currentStore === 'revolverd' ? REVO_HOLIDAY_LAST_SYNC : HOLIDAY_LAST_SYNC;
+  if (currentStore === 'revolverd') return REVO_HOLIDAY_LAST_SYNC;
+  // 鳥はしもカレンダー同期版があれば日付を表示
+  if (HOLIDAYS_LIVE && HOLIDAYS_LIVE.length > 0) {
+    try {
+      const raw = localStorage.getItem(HOLIDAY_CACHE_KEY);
+      if (raw) {
+        const cache = JSON.parse(raw);
+        if (cache.torihashi && cache.torihashi.ts) {
+          return new Date(cache.torihashi.ts).toISOString().slice(0, 10) + '（自動）';
+        }
+      }
+    } catch (e) {}
+  }
+  return HOLIDAY_LAST_SYNC;
 }
 
 const STORAGE_KEY = 'torihashi_reservations_v5';
@@ -1385,6 +1400,72 @@ function preloadEmployees() {
   if (!isWebhookConfigured()) return;
   fetchEmployees('torihashi', function() {});
   fetchEmployees('revolverd', function() {});
+}
+
+// 休業日キャッシュ
+const HOLIDAY_CACHE_KEY = 'torihashi_holiday_cache_v1';
+function _loadHolidayCacheFromStorage() {
+  try {
+    const raw = localStorage.getItem(HOLIDAY_CACHE_KEY);
+    if (!raw) return;
+    const cache = JSON.parse(raw);
+    if (cache.torihashi && Array.isArray(cache.torihashi.items)) {
+      HOLIDAYS_LIVE = cache.torihashi.items;
+    }
+    if (cache.revolverd && Array.isArray(cache.revolverd.items)) {
+      REVO_HOLIDAYS = cache.revolverd.items;
+      REVO_HOLIDAY_LAST_SYNC = cache.revolverd.ts ? new Date(cache.revolverd.ts).toISOString().slice(0, 10) : '同期済み';
+    }
+  } catch (e) {}
+}
+_loadHolidayCacheFromStorage();
+
+function setHolidayCache(store, items) {
+  if (store === 'revolverd') {
+    REVO_HOLIDAYS = items;
+    REVO_HOLIDAY_LAST_SYNC = new Date().toISOString().slice(0, 10);
+  } else {
+    HOLIDAYS_LIVE = items;
+  }
+  try {
+    let cache = {};
+    const raw = localStorage.getItem(HOLIDAY_CACHE_KEY);
+    if (raw) cache = JSON.parse(raw);
+    cache[store] = { items: items, ts: Date.now() };
+    localStorage.setItem(HOLIDAY_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {}
+}
+
+// 休業日をカレンダーから取得
+function fetchHolidays(store, callback) {
+  if (!isWebhookConfigured()) { if (callback) callback([]); return; }
+  const url = WEBHOOK_URL
+    + '?action=listHolidays'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&store=' + encodeURIComponent(store);
+  fetch(url).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (data && data.ok && Array.isArray(data.items)) {
+        setHolidayCache(store, data.items);
+        if (callback) callback(data.items);
+      } else {
+        if (callback) callback([]);
+      }
+    })
+    .catch(function(err) { if (callback) callback([]); });
+}
+
+// 起動時に両店舗の休業日を取得 → 取得後にカレンダー再描画
+function preloadHolidays() {
+  if (!isWebhookConfigured()) return;
+  fetchHolidays('torihashi', function() {
+    try { initAllCalendars(); } catch (e) {}
+    try { renderHolidays(); } catch (e) {}
+  });
+  fetchHolidays('revolverd', function() {
+    try { initAllCalendars(); } catch (e) {}
+    try { renderHolidays(); } catch (e) {}
+  });
 }
 
 // シフト追加モーダル
@@ -2207,6 +2288,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // 従業員マスタを裏でプリロード（シフト追加ダイアログを高速化）
   if (typeof preloadEmployees === 'function') {
     try { preloadEmployees(); } catch (e) {}
+  }
+
+  // 両店舗の休業日をカレンダーから同期
+  if (typeof preloadHolidays === 'function') {
+    try { preloadHolidays(); } catch (e) {}
   }
 
   // すべてのモーダル共通：オーバーレイのグレー部分をタップで閉じる
