@@ -2170,6 +2170,19 @@ window.addEventListener('DOMContentLoaded', () => {
     try { preloadEmployees(); } catch (e) {}
   }
 
+  // すべてのモーダル共通：オーバーレイのグレー部分をタップで閉じる
+  // （成功画面は誤タップ防止のため対象外：modal-overlay 内に .success-icon を持つ場合のみスキップ）
+  document.addEventListener('click', function(e) {
+    if (e.target && e.target.classList && e.target.classList.contains('modal-overlay')) {
+      // 成功モーダル（予約完了など）は確実にボタンで閉じてもらう
+      if (e.target.querySelector('.success-icon')) return;
+      e.target.remove();
+      // state.activeOverlay 等のクリーンアップ
+      if (typeof state !== 'undefined' && state.activeOverlay === e.target) state.activeOverlay = null;
+      if (typeof takeoutState !== 'undefined' && takeoutState.activeOverlay === e.target) takeoutState.activeOverlay = null;
+    }
+  });
+
   // インラインカレンダー（全画面）
   if (typeof initAllCalendars === 'function') {
     try { initAllCalendars(); } catch (e) {}
