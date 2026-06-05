@@ -624,20 +624,47 @@ button.secondary:active { background: var(--primary); color: white; }
 .status.tentative { background: var(--warning-bg); color: var(--warning); }
 .status.cancelled { background: #f0f0f0; color: var(--muted); }
 
-/* 日付クイックボタン */
-.quick-date {
-  display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px;
+/* インラインカレンダーグリッド（タップで即選択） */
+.cal-grid-wrap { margin-top: 8px; }
+.cal-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 0 6px;
 }
-.quick-date button {
-  background: var(--primary-light); border: 1px solid var(--border);
-  color: var(--primary-dark); padding: 5px 9px;
-  border-radius: 14px; font-size: 12px; font-weight: 600;
-  cursor: pointer; font-family: inherit;
-  transition: transform .1s, background .1s;
+.cal-title { font-weight: 700; font-size: 14px; color: var(--text); }
+.cal-nav {
+  background: transparent; border: 1px solid var(--border);
+  font-size: 18px; padding: 2px 12px; cursor: pointer;
+  color: var(--primary-dark); font-weight: 700;
+  border-radius: 6px; font-family: inherit;
 }
-.quick-date button:hover { background: var(--primary); color: white; }
-.quick-date button:active { transform: scale(0.95); }
-.quick-date button.qd-active { background: var(--primary); color: white; }
+.cal-nav:active { transform: scale(0.95); }
+.cal-grid {
+  display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+}
+.cal-dow {
+  text-align: center; font-weight: 700; padding: 4px 0;
+  font-size: 11px; color: var(--muted);
+}
+.cal-dow.sun { color: #c62828; }
+.cal-dow.sat { color: #1976d2; }
+.cal-day, .cal-day-blank {
+  aspect-ratio: 1 / 1; min-height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid transparent;
+  border-radius: 6px; font-size: 14px; cursor: pointer;
+  font-family: inherit; color: var(--text); font-weight: 500;
+}
+.cal-day-blank { cursor: default; }
+.cal-day:active { transform: scale(0.95); }
+.cal-day.today { background: #fffde7; border-color: #f9a825; }
+.cal-day.selected {
+  background: var(--primary) !important; color: white !important;
+  border-color: var(--primary) !important; font-weight: 700;
+}
+.cal-day.holiday { color: #c62828; background: #ffebee; }
+.cal-day.past { opacity: 0.4; }
+.cal-day.sun { color: #c62828; }
+.cal-day.sat { color: #1976d2; }
 
 .empty-state { text-align: center; padding: 24px; color: var(--muted); font-size: 14px; }
 
@@ -733,7 +760,7 @@ button.secondary:active { background: var(--primary); color: white; }
   <div class="field">
     <label>日付<span class="req">*</span></label>
     <input type="date" id="resDate" />
-    <div class="quick-date" data-target="resDate"></div>
+    <div class="cal-grid-wrap" data-target="resDate" data-onchange="onResDateChange"></div>
   </div>
 
   <button class="takeout-btn" type="button" onclick="startTakeoutFlow()">🥡 お土産（持ち帰り）はこちら →</button>
@@ -881,7 +908,7 @@ button.secondary:active { background: var(--primary); color: white; }
     <div class="field">
       <label>表示日</label>
       <input type="date" id="listDate" onchange="onListDateChange()" />
-      <div class="quick-date" data-target="listDate" data-onchange="onListDateChange"></div>
+      <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
       <button onclick="pullFromCalendar()" style="font-size:12px;padding:6px 10px;background:#fff;border:1px solid var(--primary);color:var(--primary);border-radius:6px;">🔄 カレンダーから取得</button>
@@ -909,7 +936,7 @@ button.secondary:active { background: var(--primary); color: white; }
     <div class="field">
       <label>日付<span class="req">*</span></label>
       <input type="date" id="smDate" />
-      <div class="quick-date" data-target="smDate" data-onchange="onSmDateChange"></div>
+      <div class="cal-grid-wrap" data-target="smDate" data-onchange="onSmDateChange"></div>
     </div>
     <div class="field">
       <label>時間帯</label>
@@ -1825,6 +1852,7 @@ function setCurrentStore(store) {
   try { renderCourseGrid(); } catch (e) {}
   try { renderHolidays(); } catch (e) {}
   try { rerenderSeatPref(); } catch (e) {}
+  try { initAllCalendars(); } catch (e) {}
   // 座席表レイアウトを切替（鳥はし／リボの<div>表示切替）
   const tori = document.getElementById('seatLayoutTori');
   const revo = document.getElementById('seatLayoutRevo');
@@ -2142,9 +2170,9 @@ window.addEventListener('DOMContentLoaded', () => {
     try { preloadEmployees(); } catch (e) {}
   }
 
-  // 日付クイックボタン
-  if (typeof initQuickDateButtons === 'function') {
-    try { initQuickDateButtons(); } catch (e) {}
+  // インラインカレンダー（全画面）
+  if (typeof initAllCalendars === 'function') {
+    try { initAllCalendars(); } catch (e) {}
   }
 
   // GCalから初回プル → 自動同期開始
@@ -4279,50 +4307,105 @@ function handleSeatClick(seatId) {
   autoAdvanceFromSeatMap();
 }
 
-// 日付クイックボタンの初期化（全 .quick-date 要素に対して）
-function initQuickDateButtons() {
-  const items = [
-    { label: '今日',   offset: 0 },
-    { label: '明日',   offset: 1 },
-    { label: '+2日',   offset: 2 },
-    { label: '+3日',   offset: 3 },
-    { label: '+7日',   offset: 7 },
-    { label: '+14日',  offset: 14 },
-  ];
-  document.querySelectorAll('.quick-date').forEach(function(container) {
-    if (container.dataset.initialized) return;
-    container.dataset.initialized = '1';
-    const targetId = container.getAttribute('data-target');
-    const onchangeName = container.getAttribute('data-onchange');
-    items.forEach(function(it) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.textContent = it.label;
-      btn.addEventListener('click', function() {
-        const d = new Date();
-        d.setDate(d.getDate() + it.offset);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        const dateStr = yyyy + '-' + mm + '-' + dd;
-        const inp = document.getElementById(targetId);
-        if (inp) {
-          inp.value = dateStr;
-          // change イベント発火（既存のハンドラへ）
-          if (typeof inp.dispatchEvent === 'function') {
-            try { inp.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
-          }
-          if (onchangeName && typeof window[onchangeName] === 'function') {
-            try { window[onchangeName](); } catch (e) {}
-          }
-        }
-        // ボタンのハイライト
-        container.querySelectorAll('button').forEach(function(b) { b.classList.remove('qd-active'); });
-        btn.classList.add('qd-active');
-      });
-      container.appendChild(btn);
+// インラインカレンダーグリッド：タップで即日付選択
+function renderCalendarGrid(container) {
+  if (!container) return;
+  const targetId = container.getAttribute('data-target');
+  const onchangeName = container.getAttribute('data-onchange');
+  const inp = targetId ? document.getElementById(targetId) : null;
+
+  // 表示中の年月（コンテナごとに状態保持）
+  const todayD = new Date();
+  if (!container._calState) {
+    // 既存の入力値があればその年月を表示
+    let initY = todayD.getFullYear(), initM = todayD.getMonth();
+    if (inp && inp.value) {
+      const parts = inp.value.split('-');
+      if (parts.length === 3) { initY = parseInt(parts[0]); initM = parseInt(parts[1]) - 1; }
+    }
+    container._calState = { year: initY, month: initM };
+  }
+  const state = container._calState;
+
+  const todayStr = todayD.getFullYear() + '-' + String(todayD.getMonth()+1).padStart(2,'0') + '-' + String(todayD.getDate()).padStart(2,'0');
+  const selectedStr = inp ? (inp.value || '') : '';
+
+  const firstDay = new Date(state.year, state.month, 1);
+  const startDow = firstDay.getDay();
+  const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
+
+  // 祝日／休業日マップ（現店舗）
+  const holMap = {};
+  (typeof getHolidays === 'function' ? getHolidays() : []).forEach(function(h) { holMap[h.date] = h; });
+
+  let html = '<div class="cal-header">';
+  html += '<button type="button" class="cal-nav" data-nav="-1">‹</button>';
+  html += '<span class="cal-title">' + state.year + '年 ' + (state.month + 1) + '月</span>';
+  html += '<button type="button" class="cal-nav" data-nav="+1">›</button>';
+  html += '</div>';
+
+  html += '<div class="cal-grid">';
+  ['日','月','火','水','木','金','土'].forEach(function(d, i) {
+    const cls = i === 0 ? 'cal-dow sun' : i === 6 ? 'cal-dow sat' : 'cal-dow';
+    html += '<div class="' + cls + '">' + d + '</div>';
+  });
+  for (let i = 0; i < startDow; i++) html += '<div class="cal-day-blank"></div>';
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = state.year + '-' + String(state.month + 1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+    const dow = new Date(state.year, state.month, d).getDay();
+    let cls = 'cal-day';
+    if (dateStr === todayStr) cls += ' today';
+    if (dateStr === selectedStr) cls += ' selected';
+    if (dateStr < todayStr) cls += ' past';
+    if (holMap[dateStr]) cls += ' holiday';
+    if (dow === 0) cls += ' sun';
+    if (dow === 6) cls += ' sat';
+    const title = holMap[dateStr] ? holMap[dateStr].reason : '';
+    html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '" title="' + title + '">' + d + '</button>';
+  }
+  html += '</div>';
+
+  container.innerHTML = html;
+
+  // ナビゲーション（前月/翌月）
+  container.querySelectorAll('.cal-nav').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const delta = parseInt(btn.getAttribute('data-nav'), 10);
+      state.month += delta;
+      if (state.month < 0)  { state.month = 11; state.year--; }
+      if (state.month > 11) { state.month = 0;  state.year++; }
+      renderCalendarGrid(container);
     });
   });
+
+  // 日付タップ → 確定
+  container.querySelectorAll('.cal-day').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const dateStr = btn.getAttribute('data-date');
+      if (inp) {
+        inp.value = dateStr;
+        try { inp.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+      }
+      if (onchangeName && typeof window[onchangeName] === 'function') {
+        try { window[onchangeName](); } catch (e) {}
+      }
+      // 選択ハイライトのために再描画
+      renderCalendarGrid(container);
+    });
+  });
+}
+
+// 全カレンダーを初期化／再描画
+function initAllCalendars() {
+  document.querySelectorAll('.cal-grid-wrap').forEach(function(c) {
+    renderCalendarGrid(c);
+  });
+}
+
+// 新規予約の日付変更時に呼ばれる
+function onResDateChange() {
+  // 既存の resDate input にハンドラがなければ、ここで再描画など追加
+  // 何もしなくてもユーザーが「空き時間を確認」を押す流れ
 }
 
 // 座席表の日付変更ハンドラ（quick-date から呼ばれる）
