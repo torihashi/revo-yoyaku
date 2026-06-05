@@ -1258,9 +1258,37 @@ function callWebhook(payload) {
   .catch(function(err) { return { ok: false, error: String(err) }; });
 }
 
-// 従業員マスタを取得（スプレッドシートから）
+// 従業員マスタのキャッシュ（localStorage）
+const EMPLOYEE_CACHE_KEY = 'torihashi_employee_cache_v1';
+function getEmployeeCache() {
+  try {
+    const raw = localStorage.getItem(EMPLOYEE_CACHE_KEY);
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch (e) { return {}; }
+}
+function setEmployeeCache(store, items) {
+  try {
+    const cache = getEmployeeCache();
+    cache[store] = { items: items, ts: Date.now() };
+    localStorage.setItem(EMPLOYEE_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {}
+}
+function getCachedEmployees(store) {
+  const cache = getEmployeeCache();
+  return cache[store] ? cache[store].items : null;
+}
+
+// 従業員マスタを取得（キャッシュ即返し＋バックグラウンド更新）
 function fetchEmployees(store, callback) {
-  if (!isWebhookConfigured()) { if (callback) callback([]); return; }
+  // キャッシュがあればすぐ返す
+  const cached = getCachedEmployees(store);
+  if (cached && callback) callback(cached);
+
+  if (!isWebhookConfigured()) {
+    if (!cached && callback) callback([]);
+    return;
+  }
   const url = WEBHOOK_URL
     + '?action=listEmployees'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
@@ -1268,12 +1296,23 @@ function fetchEmployees(store, callback) {
   fetch(url).then(function(r) { return r.json(); })
     .then(function(data) {
       if (data && data.ok && Array.isArray(data.items)) {
-        if (callback) callback(data.items);
-      } else {
-        if (callback) callback([]);
+        setEmployeeCache(store, data.items);
+        // キャッシュと内容が違えば再コールバック
+        if (callback && (!cached || JSON.stringify(cached) !== JSON.stringify(data.items))) {
+          callback(data.items);
+        }
+      } else if (!cached && callback) {
+        callback([]);
       }
     })
-    .catch(function(err) { if (callback) callback([]); });
+    .catch(function(err) { if (!cached && callback) callback([]); });
+}
+
+// 起動時に両店舗の従業員を裏でプリロード
+function preloadEmployees() {
+  if (!isWebhookConfigured()) return;
+  fetchEmployees('torihashi', function() {});
+  fetchEmployees('revolverd', function() {});
 }
 
 // シフト追加モーダル
@@ -1297,13 +1336,21 @@ function openStaffShiftModal() {
     return opts;
   }
 
+  // キャッシュがあればその時点でプルダウンの初期HTMLに反映（読み込み中表示を回避）
+  const cachedEmps = getCachedEmployees(currentStore);
+  const initialOptions = (cachedEmps && cachedEmps.length > 0)
+    ? '<option value="">▼ 選択してください</option>' + cachedEmps.map(function(e) {
+        return '<option value="' + e.name + '">' + e.name + '</option>';
+      }).join('')
+    : '<option value="">読み込み中...</option>';
+
   overlay.innerHTML =
     '<div class="modal" style="max-width:420px">'
     + '<h3>シフトを追加（' + getStoreLabel() + '）</h3>'
     + '<div style="margin-bottom:10px;font-size:13px;color:var(--muted);">対象日：<strong style="color:var(--text)">' + date + '</strong></div>'
     + '<div class="field">'
     +   '<label>従業員<span class="req">*</span></label>'
-    +   '<select id="shiftEmployee" style="width:100%"><option value="">読み込み中...</option></select>'
+    +   '<select id="shiftEmployee" style="width:100%">' + initialOptions + '</select>'
     + '</div>'
     + '<div class="field">'
     +   '<label>開始時刻<span class="req">*</span></label>'
@@ -1315,9 +1362,11 @@ function openStaffShiftModal() {
     + '</div>';
   document.body.appendChild(overlay);
 
-  // 従業員マスタ取得
-  fetchEmployees(currentStore, function(employees) {
+  // 従業員マスタ取得（キャッシュがあれば即時表示、裏で最新化）
+  const renderEmployeeOptions = function(employees) {
     const sel = document.getElementById('shiftEmployee');
+    if (!sel) return;
+    const currentValue = sel.value;
     if (!employees || employees.length === 0) {
       sel.innerHTML = '<option value="">（従業員マスタが空 or 取得失敗）</option>';
       return;
@@ -1326,7 +1375,9 @@ function openStaffShiftModal() {
       + employees.map(function(e) {
         return '<option value="' + e.name + '">' + e.name + '</option>';
       }).join('');
-  });
+    if (currentValue) sel.value = currentValue;
+  };
+  fetchEmployees(currentStore, renderEmployeeOptions);
 
   document.getElementById('closeShiftBtn').addEventListener('click', function() {
     overlay.remove();
@@ -2035,6 +2086,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // 座席表をデフォルト表示なので、起動直後に初期化
   if (typeof initSeatMap === 'function') {
     try { initSeatMap(); } catch (e) { console.error('initSeatMap failed:', e); }
+  }
+
+  // 従業員マスタを裏でプリロード（シフト追加ダイアログを高速化）
+  if (typeof preloadEmployees === 'function') {
+    try { preloadEmployees(); } catch (e) {}
   }
 
   // GCalから初回プル → 自動同期開始
