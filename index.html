@@ -1858,6 +1858,45 @@ function setCurrentStore(store) {
   const revo = document.getElementById('seatLayoutRevo');
   if (tori) tori.classList.toggle('hidden', store !== 'torihashi');
   if (revo) revo.classList.toggle('hidden', store !== 'revolverd');
+
+  // 新規予約タブの空き判定結果を新しい店舗のロジックで再計算
+  // （既に「空き時間を確認」を押している状態なら、推奨席候補が前店舗のものになるため）
+  try { refreshAvailabilityForStoreChange(); } catch (e) {}
+}
+
+// 店舗切替時：新規予約画面の空き判定・推奨席候補を現店舗で再計算
+function refreshAvailabilityForStoreChange() {
+  // 既に空き判定済みでない、または日付/人数未設定なら何もしない
+  if (!state || !state.availabilityChecked) {
+    // 空き判定実施前なら slot 表示クリアだけ
+    const slotResult = document.getElementById('slotResult');
+    if (slotResult) slotResult.innerHTML = '';
+    return;
+  }
+  const dateInp = document.getElementById('resDate');
+  const peopleInp = document.getElementById('resPeople');
+  if (!dateInp || !peopleInp || !dateInp.value) return;
+  // 自動詳細遷移を一時的に抑制（再計算中に意図せずstep2へ飛ばさない）
+  state._suppressAutoAdvance = true;
+  if (typeof checkAvailability === 'function') {
+    try { checkAvailability(); } catch (e) {}
+    // 時刻が選択済みなら slotDetails も再表示
+    if (state.time) {
+      setTimeout(function() {
+        const btn = document.querySelector('#slotGrid .time-btn[data-time="' + state.time + '"]');
+        if (btn && !btn.classList.contains('full')) {
+          btn.classList.add('selected');
+          if (typeof showSlotDetails === 'function') {
+            try { showSlotDetails(dateInp.value, state.time, parseInt(peopleInp.value) || 2); } catch (e) {}
+          }
+        }
+        // 抑制フラグ解除
+        setTimeout(function() { state._suppressAutoAdvance = false; }, 100);
+      }, 50);
+    } else {
+      setTimeout(function() { state._suppressAutoAdvance = false; }, 200);
+    }
+  }
 }
 
 // 現在の店舗の席マスタを返す
@@ -2369,11 +2408,12 @@ function showSlotDetails(date, time, people) {
   document.getElementById('slotResult').innerHTML = html;
 
   // 空きがあれば自動的に詳細入力（step2）へ進む
-  if (slot.candidates.length > 0 && slot.cls !== 'full') {
+  // ただし店舗切替による再描画中はスキップ（ユーザー操作起点でのみ進む）
+  if (slot.candidates.length > 0 && slot.cls !== 'full' && !state._suppressAutoAdvance) {
     setTimeout(function() {
       try { proceedToStep2(); } catch (e) {}
     }, 250);
-  } else {
+  } else if (slot.cls === 'full') {
     // 満員なら詳細入力ボタンへ自動スクロール
     setTimeout(function() {
       var btn = document.getElementById('proceedDetailBtn');
