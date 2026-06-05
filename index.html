@@ -624,6 +624,21 @@ button.secondary:active { background: var(--primary); color: white; }
 .status.tentative { background: var(--warning-bg); color: var(--warning); }
 .status.cancelled { background: #f0f0f0; color: var(--muted); }
 
+/* 日付クイックボタン */
+.quick-date {
+  display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px;
+}
+.quick-date button {
+  background: var(--primary-light); border: 1px solid var(--border);
+  color: var(--primary-dark); padding: 5px 9px;
+  border-radius: 14px; font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+  transition: transform .1s, background .1s;
+}
+.quick-date button:hover { background: var(--primary); color: white; }
+.quick-date button:active { transform: scale(0.95); }
+.quick-date button.qd-active { background: var(--primary); color: white; }
+
 .empty-state { text-align: center; padding: 24px; color: var(--muted); font-size: 14px; }
 
 .summary-row {
@@ -718,6 +733,7 @@ button.secondary:active { background: var(--primary); color: white; }
   <div class="field">
     <label>日付<span class="req">*</span></label>
     <input type="date" id="resDate" />
+    <div class="quick-date" data-target="resDate"></div>
   </div>
 
   <button class="takeout-btn" type="button" onclick="startTakeoutFlow()">🥡 お土産（持ち帰り）はこちら →</button>
@@ -865,6 +881,7 @@ button.secondary:active { background: var(--primary); color: white; }
     <div class="field">
       <label>表示日</label>
       <input type="date" id="listDate" onchange="onListDateChange()" />
+      <div class="quick-date" data-target="listDate" data-onchange="onListDateChange"></div>
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
       <button onclick="pullFromCalendar()" style="font-size:12px;padding:6px 10px;background:#fff;border:1px solid var(--primary);color:var(--primary);border-radius:6px;">🔄 カレンダーから取得</button>
@@ -892,6 +909,7 @@ button.secondary:active { background: var(--primary); color: white; }
     <div class="field">
       <label>日付<span class="req">*</span></label>
       <input type="date" id="smDate" />
+      <div class="quick-date" data-target="smDate" data-onchange="onSmDateChange"></div>
     </div>
     <div class="field">
       <label>時間帯</label>
@@ -1258,30 +1276,43 @@ function callWebhook(payload) {
   .catch(function(err) { return { ok: false, error: String(err) }; });
 }
 
-// 従業員マスタのキャッシュ（localStorage）
+// 従業員マスタのキャッシュ（メモリ + localStorage 二重）
 const EMPLOYEE_CACHE_KEY = 'torihashi_employee_cache_v1';
-function getEmployeeCache() {
+const _employeeMemCache = {}; // メモリ：ページ表示中は即時アクセス
+const _employeeInflight = {};  // 進行中のフェッチ Promise
+
+function _loadCacheFromStorage() {
   try {
     const raw = localStorage.getItem(EMPLOYEE_CACHE_KEY);
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch (e) { return {}; }
+    if (!raw) return;
+    const cache = JSON.parse(raw);
+    Object.keys(cache).forEach(function(store) {
+      if (cache[store] && Array.isArray(cache[store].items)) {
+        _employeeMemCache[store] = cache[store].items;
+      }
+    });
+  } catch (e) {}
 }
+// 起動時に同期的にメモリへ展開（DOMContentLoaded を待たない）
+_loadCacheFromStorage();
+
 function setEmployeeCache(store, items) {
+  _employeeMemCache[store] = items;
   try {
-    const cache = getEmployeeCache();
+    let cache = {};
+    const raw = localStorage.getItem(EMPLOYEE_CACHE_KEY);
+    if (raw) cache = JSON.parse(raw);
     cache[store] = { items: items, ts: Date.now() };
     localStorage.setItem(EMPLOYEE_CACHE_KEY, JSON.stringify(cache));
   } catch (e) {}
 }
 function getCachedEmployees(store) {
-  const cache = getEmployeeCache();
-  return cache[store] ? cache[store].items : null;
+  return _employeeMemCache[store] || null;
 }
 
-// 従業員マスタを取得（キャッシュ即返し＋バックグラウンド更新）
+// 従業員マスタを取得（キャッシュ即返し＋バックグラウンド更新／重複フェッチ抑制）
 function fetchEmployees(store, callback) {
-  // キャッシュがあればすぐ返す
+  // メモリキャッシュがあればすぐ返す（同期的）
   const cached = getCachedEmployees(store);
   if (cached && callback) callback(cached);
 
@@ -1289,23 +1320,37 @@ function fetchEmployees(store, callback) {
     if (!cached && callback) callback([]);
     return;
   }
+
+  // 同じ店舗のフェッチが進行中ならそれを使い回す
+  if (_employeeInflight[store]) {
+    _employeeInflight[store].then(function(items) {
+      if (callback && (!cached || JSON.stringify(cached) !== JSON.stringify(items))) {
+        callback(items);
+      }
+    });
+    return;
+  }
+
   const url = WEBHOOK_URL
     + '?action=listEmployees'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
     + '&store=' + encodeURIComponent(store);
-  fetch(url).then(function(r) { return r.json(); })
+  _employeeInflight[store] = fetch(url).then(function(r) { return r.json(); })
     .then(function(data) {
       if (data && data.ok && Array.isArray(data.items)) {
         setEmployeeCache(store, data.items);
-        // キャッシュと内容が違えば再コールバック
-        if (callback && (!cached || JSON.stringify(cached) !== JSON.stringify(data.items))) {
-          callback(data.items);
-        }
-      } else if (!cached && callback) {
-        callback([]);
+        return data.items;
       }
+      return cached || [];
     })
-    .catch(function(err) { if (!cached && callback) callback([]); });
+    .catch(function(err) { return cached || []; })
+    .finally(function() { delete _employeeInflight[store]; });
+
+  _employeeInflight[store].then(function(items) {
+    if (callback && (!cached || JSON.stringify(cached) !== JSON.stringify(items))) {
+      callback(items);
+    }
+  });
 }
 
 // 起動時に両店舗の従業員を裏でプリロード
@@ -1337,12 +1382,16 @@ function openStaffShiftModal() {
   }
 
   // キャッシュがあればその時点でプルダウンの初期HTMLに反映（読み込み中表示を回避）
+  // ない場合は即座にプリロードを発火（既に進行中なら無視される）
+  if (typeof preloadEmployees === 'function') {
+    try { preloadEmployees(); } catch (e) {}
+  }
   const cachedEmps = getCachedEmployees(currentStore);
   const initialOptions = (cachedEmps && cachedEmps.length > 0)
     ? '<option value="">▼ 選択してください</option>' + cachedEmps.map(function(e) {
         return '<option value="' + e.name + '">' + e.name + '</option>';
       }).join('')
-    : '<option value="">読み込み中...</option>';
+    : '<option value="">初回のみ読み込み中（数秒）...</option>';
 
   overlay.innerHTML =
     '<div class="modal" style="max-width:420px">'
@@ -2091,6 +2140,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // 従業員マスタを裏でプリロード（シフト追加ダイアログを高速化）
   if (typeof preloadEmployees === 'function') {
     try { preloadEmployees(); } catch (e) {}
+  }
+
+  // 日付クイックボタン
+  if (typeof initQuickDateButtons === 'function') {
+    try { initQuickDateButtons(); } catch (e) {}
   }
 
   // GCalから初回プル → 自動同期開始
@@ -4223,6 +4277,63 @@ function handleSeatClick(seatId) {
   // プリセット席バナー表示 ＋ 自動で空き判定 ＋ 名前欄フォーカス
   updatePreselectBanner();
   autoAdvanceFromSeatMap();
+}
+
+// 日付クイックボタンの初期化（全 .quick-date 要素に対して）
+function initQuickDateButtons() {
+  const items = [
+    { label: '今日',   offset: 0 },
+    { label: '明日',   offset: 1 },
+    { label: '+2日',   offset: 2 },
+    { label: '+3日',   offset: 3 },
+    { label: '+7日',   offset: 7 },
+    { label: '+14日',  offset: 14 },
+  ];
+  document.querySelectorAll('.quick-date').forEach(function(container) {
+    if (container.dataset.initialized) return;
+    container.dataset.initialized = '1';
+    const targetId = container.getAttribute('data-target');
+    const onchangeName = container.getAttribute('data-onchange');
+    items.forEach(function(it) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = it.label;
+      btn.addEventListener('click', function() {
+        const d = new Date();
+        d.setDate(d.getDate() + it.offset);
+        const yyyy = d.getFullYear();
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        const dateStr = yyyy + '-' + mm + '-' + dd;
+        const inp = document.getElementById(targetId);
+        if (inp) {
+          inp.value = dateStr;
+          // change イベント発火（既存のハンドラへ）
+          if (typeof inp.dispatchEvent === 'function') {
+            try { inp.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+          }
+          if (onchangeName && typeof window[onchangeName] === 'function') {
+            try { window[onchangeName](); } catch (e) {}
+          }
+        }
+        // ボタンのハイライト
+        container.querySelectorAll('button').forEach(function(b) { b.classList.remove('qd-active'); });
+        btn.classList.add('qd-active');
+      });
+      container.appendChild(btn);
+    });
+  });
+}
+
+// 座席表の日付変更ハンドラ（quick-date から呼ばれる）
+function onSmDateChange() {
+  const dateInp = document.getElementById('smDate');
+  if (!dateInp) return;
+  smState.date = dateInp.value;
+  // 一覧側の日付も連動
+  const listDate = document.getElementById('listDate');
+  if (listDate) listDate.value = dateInp.value;
+  if (typeof renderSeatMap === 'function') renderSeatMap();
 }
 
 // 座席表から飛んできた時、即座に空き判定 → 時刻を選択して、人数入力欄にフォーカス
