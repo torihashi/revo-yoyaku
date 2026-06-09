@@ -1077,7 +1077,7 @@ select.time-select option:disabled { color: #aaa; }
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
       <button id="refreshBtn" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
-      <div id="lastSyncTime" class="last-sync-time"></div>
+      <div id="lastSyncTime" class="last-sync-time">最終同期：未同期</div>
       <span style="font-size:10px;color:var(--muted);">※ 60秒ごとに自動同期</span>
     </div>
     <div style="font-size:11px; color:var(--muted); padding:6px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:8px;">
@@ -1108,7 +1108,11 @@ select.time-select option:disabled { color: #aaa; }
       <label>時間帯</label>
       <select id="smTime" style="width:100%"></select>
     </div>
-    <button class="secondary" onclick="renderSeatMap()" style="margin-bottom:10px">🔄 更新</button>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <button id="refreshBtnSm" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
+      <button class="secondary" onclick="renderSeatMap()" style="font-size:12px;padding:6px 10px">画面更新</button>
+      <div id="lastSyncTimeSm" class="last-sync-time">最終同期：未同期</div>
+    </div>
     <div class="move-mode-banner" id="moveBanner">
       🔄 移動モード：移動先の席、または未設定枠の「空」をタップしてください　<a href="javascript:cancelMoveMode()" style="color:inherit;text-decoration:underline;">キャンセル</a>
     </div>
@@ -2328,22 +2332,36 @@ function mergeFromCalendar(items) {
 }
 
 // 手動同期ボタン用
+// 全ての更新ボタンを取得（一覧タブ＋座席表）
+function _getRefreshBtns() {
+  return [
+    document.getElementById('refreshBtn'),
+    document.getElementById('refreshBtnSm')
+  ].filter(Boolean);
+}
+function _getLastSyncEls() {
+  return [
+    document.getElementById('lastSyncTime'),
+    document.getElementById('lastSyncTimeSm')
+  ].filter(Boolean);
+}
+
 function pullFromCalendar() {
   if (!isWebhookConfigured()) {
     alert('Webhookが設定されていません');
     return;
   }
-  // ボタン視覚状態
-  const btn = document.getElementById('refreshBtn');
-  if (btn) {
+  // ボタン視覚状態（複数ボタンに反映）
+  const btns = _getRefreshBtns();
+  btns.forEach(function(btn) {
     btn.disabled = true;
     btn.classList.remove('is-success', 'is-error');
     btn.classList.add('is-loading');
     btn.innerHTML = '<span class="spinner">🔄</span> 取得中...';
-  }
+  });
   updateSyncStatus('カレンダーから取得中...', '#ef6c00');
   syncFromWebhook(function(ok, result) {
-    const lastSyncEl = document.getElementById('lastSyncTime');
+    const lastSyncEls = _getLastSyncEls();
     if (ok) {
       const msg = '✓ 取得 ' + result.total + '件 / 更新 ' + result.updated
                 + ' / 新規 ' + result.added + ' / 取消 ' + result.cancelled
@@ -2355,8 +2373,10 @@ function pullFromCalendar() {
       const mm = String(now.getMinutes()).padStart(2,'0');
       const ss = String(now.getSeconds()).padStart(2,'0');
       try { localStorage.setItem('lastSyncTime', now.toISOString()); } catch (e) {}
-      if (lastSyncEl) lastSyncEl.textContent = '最終同期：' + hh + ':' + mm + ':' + ss;
-      if (btn) {
+      lastSyncEls.forEach(function(el) {
+        el.textContent = '最終同期：' + hh + ':' + mm + ':' + ss;
+      });
+      btns.forEach(function(btn) {
         btn.disabled = false;
         btn.classList.remove('is-loading');
         btn.classList.add('is-success');
@@ -2365,11 +2385,11 @@ function pullFromCalendar() {
           btn.classList.remove('is-success');
           btn.innerHTML = '🔄 カレンダーから取得';
         }, 3500);
-      }
+      });
     } else {
       updateSyncStatus('⚠ 取得失敗', '#c62828');
       setTimeout(function() { updateSyncStatus(''); }, 4000);
-      if (btn) {
+      btns.forEach(function(btn) {
         btn.disabled = false;
         btn.classList.remove('is-loading');
         btn.classList.add('is-error');
@@ -2378,23 +2398,26 @@ function pullFromCalendar() {
           btn.classList.remove('is-error');
           btn.innerHTML = '🔄 カレンダーから取得';
         }, 3500);
-      }
+      });
     }
   });
 }
 
-// 起動時に「最終同期」表示を復元
+// 起動時に「最終同期」表示を復元（全表示に反映）
 function restoreLastSyncDisplay() {
   try {
     const iso = localStorage.getItem('lastSyncTime');
-    if (!iso) return;
-    const d = new Date(iso);
-    const lastSyncEl = document.getElementById('lastSyncTime');
-    if (lastSyncEl) {
-      const hh = String(d.getHours()).padStart(2,'0');
-      const mm = String(d.getMinutes()).padStart(2,'0');
-      lastSyncEl.textContent = '最終同期：' + hh + ':' + mm;
+    const els = _getLastSyncEls();
+    if (!iso) {
+      els.forEach(function(el) { el.textContent = '最終同期：未同期'; });
+      return;
     }
+    const d = new Date(iso);
+    const hh = String(d.getHours()).padStart(2,'0');
+    const mm = String(d.getMinutes()).padStart(2,'0');
+    els.forEach(function(el) {
+      el.textContent = '最終同期：' + hh + ':' + mm;
+    });
   } catch (e) {}
 }
 
@@ -2415,12 +2438,11 @@ function startAutoSync() {
       if (ok) {
         const now = new Date();
         try { localStorage.setItem('lastSyncTime', now.toISOString()); } catch (e) {}
-        const lastSyncEl = document.getElementById('lastSyncTime');
-        if (lastSyncEl) {
-          const hh = String(now.getHours()).padStart(2,'0');
-          const mm = String(now.getMinutes()).padStart(2,'0');
-          lastSyncEl.textContent = '最終同期：' + hh + ':' + mm + '（自動）';
-        }
+        const hh = String(now.getHours()).padStart(2,'0');
+        const mm = String(now.getMinutes()).padStart(2,'0');
+        _getLastSyncEls().forEach(function(el) {
+          el.textContent = '最終同期：' + hh + ':' + mm + '（自動）';
+        });
       }
     });
   }, 60 * 1000);
