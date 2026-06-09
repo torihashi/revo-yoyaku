@@ -440,15 +440,16 @@ button.secondary:active { background: var(--primary); color: white; }
   position: relative; user-select: none; text-align: center; line-height: 1.1;
 }
 .revo-seat-layout .seat .seat-cap { font-size: 9px; font-weight: 500; opacity: 0.7; }
-.revo-seat-layout .seat.busy { background: #ffebee; color: var(--error); border-color: var(--error); }
-.revo-seat-layout .seat.has-booking { background: #fff4f5; border-color: #ffc1bd; }
+/* リボは赤テーマなので、予約済みは緑で視認性UP（鳥はしとは逆の配色） */
+.revo-seat-layout .seat.busy { background: #c8e6c9; color: #1b5e20; border-color: #2e7d32; }
+.revo-seat-layout .seat.has-booking { background: #e8f5e9; border-color: #81c784; }
 .revo-seat-layout .seat.multi-time { border: 3px dashed #000 !important; box-shadow: 0 0 0 1px #000 inset; }
 .revo-seat-layout .seat.drop-target { outline: 3px dashed var(--primary); outline-offset: -2px; }
 .revo-seat-layout .seat.in-move { background: var(--primary); color: white; border-color: var(--primary); animation: pulse-move 1s infinite; }
 .revo-seat-layout .seat .occ {
   position: absolute; bottom: 2px; left: 2px; right: 2px;
-  font-size: 10px; color: var(--error); line-height: 1.1;
-  font-weight: 600; text-align: center;
+  font-size: 10px; color: #1b5e20; line-height: 1.1;
+  font-weight: 700; text-align: center;
   text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
 }
 /* グリッドエリア割当て（HTMLのclass名と対応） */
