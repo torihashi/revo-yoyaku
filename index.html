@@ -728,6 +728,39 @@ button.secondary:active { background: var(--primary); color: white; }
 .status.tentative { background: var(--warning-bg); color: var(--warning); }
 .status.cancelled { background: #f0f0f0; color: var(--muted); }
 
+/* 更新ボタン（大きく分かりやすく） */
+.refresh-btn {
+  font-size: 14px; font-weight: 700;
+  padding: 10px 14px; background: var(--primary-light);
+  border: 2px solid var(--primary); color: var(--primary-dark);
+  border-radius: 8px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  transition: all 0.15s;
+  font-family: inherit;
+}
+.refresh-btn:active { transform: scale(0.97); }
+.refresh-btn.is-loading {
+  background: var(--warning-bg); border-color: var(--warning); color: var(--warning);
+  cursor: wait;
+}
+.refresh-btn.is-success {
+  background: var(--success-bg); border-color: var(--success); color: var(--success);
+}
+.refresh-btn.is-error {
+  background: var(--error-bg); border-color: var(--error); color: var(--error);
+}
+.last-sync-time {
+  display: inline-block; margin-left: 10px;
+  font-size: 11px; color: var(--muted);
+  vertical-align: middle;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.refresh-btn.is-loading .spinner {
+  display: inline-block; animation: spin 0.8s linear infinite;
+}
+
 /* 時刻プルダウン */
 select.time-select {
   width: 100%;
@@ -1043,7 +1076,8 @@ select.time-select option:disabled { color: #aaa; }
       <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
     </div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-      <button onclick="pullFromCalendar()" style="font-size:12px;padding:6px 10px;background:#fff;border:1px solid var(--primary);color:var(--primary);border-radius:6px;">🔄 カレンダーから取得</button>
+      <button id="refreshBtn" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
+      <div id="lastSyncTime" class="last-sync-time"></div>
       <span style="font-size:10px;color:var(--muted);">※ 60秒ごとに自動同期</span>
     </div>
     <div style="font-size:11px; color:var(--muted); padding:6px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:8px;">
@@ -2164,6 +2198,27 @@ function syncFromWebhook(callback) {
 //   - PWAに無いイベントは新規取り込み（簡易パース）
 //   - PWA側で削除されたが GCal にまだあるイベントはそのまま（手動対応）
 // ============================================================
+// カレンダーのイベントタイトルから店舗のコースIDを推定
+function inferCourseFromTitle(title, store) {
+  const isRevo = store === 'revolverd';
+  if (isRevo) {
+    if (title.indexOf('クラフト飲み放題') >= 0 || title.indexOf('クラフト') >= 0) return 'R2';
+    if (title.indexOf('コラボクラフト') >= 0 || title.indexOf('コラボ飲放') >= 0) return 'R4';
+    if (title.indexOf('コラボ') >= 0) return 'R3';
+    if (title.indexOf('リボ飲') >= 0 || title.indexOf('リボ飲み放題') >= 0) return 'R1';
+    if (title.indexOf('女子会') >= 0) return 'R5';
+    return null; // 不明はnull（既存値維持）
+  } else {
+    // 鳥はし：価格＋飲み放題で判定
+    if (title.indexOf('7700') >= 0) return 'E';
+    if (title.indexOf('6600') >= 0) return 'D';
+    if (title.indexOf('5500') >= 0) return 'C';
+    if (title.indexOf('3300') >= 0) return 'B';
+    if (title.indexOf('2200') >= 0) return 'A';
+    return null;
+  }
+}
+
 function mergeFromCalendar(items) {
   let updated = 0, added = 0, cancelled = 0, restored = 0;
   items.forEach(function(ev) {
@@ -2209,6 +2264,18 @@ function mergeFromCalendar(items) {
       // 席名の同期（カレンダー側で席を変えたらPWAにも反映）
       if (seatFromTitle && existing.seat !== seatFromTitle && existing.type !== 'takeout') {
         existing.seat = seatFromTitle; changed = true;
+      }
+      // 名前の同期（タイトル中の「〇〇様」を抽出）
+      const nameMatchUpd = cleanTitle.match(/([ァ-ヶー一-龯ぁ-んa-zA-Z]+)様/);
+      if (nameMatchUpd && existing.name !== nameMatchUpd[1] && existing.type !== 'takeout') {
+        existing.name = nameMatchUpd[1]; changed = true;
+      }
+      // コースの推定同期（タイトルからキーワードを判定）
+      if (existing.type !== 'takeout') {
+        const inferredCourse = inferCourseFromTitle(cleanTitle, existing.store || ev.store);
+        if (inferredCourse && existing.course !== inferredCourse) {
+          existing.course = inferredCourse; changed = true;
+        }
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
       if (existing.time !== evTime)  { existing.time = evTime; changed = true; }
@@ -2266,19 +2333,69 @@ function pullFromCalendar() {
     alert('Webhookが設定されていません');
     return;
   }
+  // ボタン視覚状態
+  const btn = document.getElementById('refreshBtn');
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.remove('is-success', 'is-error');
+    btn.classList.add('is-loading');
+    btn.innerHTML = '<span class="spinner">🔄</span> 取得中...';
+  }
   updateSyncStatus('カレンダーから取得中...', '#ef6c00');
   syncFromWebhook(function(ok, result) {
+    const lastSyncEl = document.getElementById('lastSyncTime');
     if (ok) {
       const msg = '✓ 取得 ' + result.total + '件 / 更新 ' + result.updated
                 + ' / 新規 ' + result.added + ' / 取消 ' + result.cancelled
                 + ' / 復元 ' + (result.restored || 0);
       updateSyncStatus(msg, '#2e7d32');
       setTimeout(function() { updateSyncStatus(''); }, 5000);
+      const now = new Date();
+      const hh = String(now.getHours()).padStart(2,'0');
+      const mm = String(now.getMinutes()).padStart(2,'0');
+      const ss = String(now.getSeconds()).padStart(2,'0');
+      try { localStorage.setItem('lastSyncTime', now.toISOString()); } catch (e) {}
+      if (lastSyncEl) lastSyncEl.textContent = '最終同期：' + hh + ':' + mm + ':' + ss;
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('is-loading');
+        btn.classList.add('is-success');
+        btn.innerHTML = '✓ 同期OK（更新' + result.updated + '・新規' + result.added + '）';
+        setTimeout(function() {
+          btn.classList.remove('is-success');
+          btn.innerHTML = '🔄 カレンダーから取得';
+        }, 3500);
+      }
     } else {
       updateSyncStatus('⚠ 取得失敗', '#c62828');
       setTimeout(function() { updateSyncStatus(''); }, 4000);
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('is-loading');
+        btn.classList.add('is-error');
+        btn.innerHTML = '⚠ 失敗 - もう一度タップ';
+        setTimeout(function() {
+          btn.classList.remove('is-error');
+          btn.innerHTML = '🔄 カレンダーから取得';
+        }, 3500);
+      }
     }
   });
+}
+
+// 起動時に「最終同期」表示を復元
+function restoreLastSyncDisplay() {
+  try {
+    const iso = localStorage.getItem('lastSyncTime');
+    if (!iso) return;
+    const d = new Date(iso);
+    const lastSyncEl = document.getElementById('lastSyncTime');
+    if (lastSyncEl) {
+      const hh = String(d.getHours()).padStart(2,'0');
+      const mm = String(d.getMinutes()).padStart(2,'0');
+      lastSyncEl.textContent = '最終同期：' + hh + ':' + mm;
+    }
+  } catch (e) {}
 }
 
 // 自動同期：60秒ごとにバックグラウンドでカレンダーから取得（一覧/座席表タブ表示中のみ）
@@ -2294,7 +2411,18 @@ function startAutoSync() {
     const visible = (listTab && !listTab.classList.contains('hidden'))
                  || (seatmapTab && !seatmapTab.classList.contains('hidden'));
     if (!visible) return;
-    syncFromWebhook(function(){ /* 静かに更新 */ });
+    syncFromWebhook(function(ok){
+      if (ok) {
+        const now = new Date();
+        try { localStorage.setItem('lastSyncTime', now.toISOString()); } catch (e) {}
+        const lastSyncEl = document.getElementById('lastSyncTime');
+        if (lastSyncEl) {
+          const hh = String(now.getHours()).padStart(2,'0');
+          const mm = String(now.getMinutes()).padStart(2,'0');
+          lastSyncEl.textContent = '最終同期：' + hh + ':' + mm + '（自動）';
+        }
+      }
+    });
   }, 60 * 1000);
 }
 
@@ -2738,6 +2866,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // インラインカレンダー（全画面）
   if (typeof initAllCalendars === 'function') {
     try { initAllCalendars(); } catch (e) {}
+  }
+
+  // 最終同期時刻表示の復元
+  if (typeof restoreLastSyncDisplay === 'function') {
+    try { restoreLastSyncDisplay(); } catch (e) {}
   }
 
   // 月間労働集計セクション初期化
