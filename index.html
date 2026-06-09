@@ -1778,22 +1778,8 @@ function openStaffShiftModal() {
     + '</div>';
   document.body.appendChild(overlay);
 
-  // その日の不可リストを取得 → プルダウンに❌マークを付ける
+  // 不可リスト（その日 ❌登録された人）
   let unavSet = {};
-  fetchStaffSchedule(date, currentStore, function(items) {
-    unavSet = {};
-    (items || []).forEach(function(s) {
-      if (s.name && s.name.indexOf('❌') === 0) {
-        // 名前抽出
-        const rest = s.name.substring(1).trim();
-        const m = rest.match(/^(.+?)\s*[（(]/);
-        const n = m ? m[1] : rest;
-        unavSet[n] = true;
-      }
-    });
-    // 再描画
-    if (cachedEmps && cachedEmps.length > 0) renderEmployeeOptions(cachedEmps);
-  });
 
   // 従業員マスタ取得（キャッシュがあれば即時表示、裏で最新化）
   const renderEmployeeOptions = function(employees) {
@@ -1811,7 +1797,23 @@ function openStaffShiftModal() {
       }).join('');
     if (currentValue) sel.value = currentValue;
   };
+
+  // ① まず従業員マスタを描画（キャッシュ即時）
   fetchEmployees(currentStore, renderEmployeeOptions);
+
+  // ② その日のシフト一覧を裏で取得 → ❌マークを更新
+  fetchStaffSchedule(date, currentStore, function(items) {
+    unavSet = {};
+    (items || []).forEach(function(s) {
+      if (s.name && s.name.indexOf('❌') === 0) {
+        const rest = s.name.substring(1).trim();
+        const m = rest.match(/^(.+?)\s*[（(]/);
+        const n = m ? m[1] : rest;
+        unavSet[n] = true;
+      }
+    });
+    if (cachedEmps && cachedEmps.length > 0) renderEmployeeOptions(cachedEmps);
+  });
 
   document.getElementById('closeShiftBtn').addEventListener('click', function() {
     overlay.remove();
