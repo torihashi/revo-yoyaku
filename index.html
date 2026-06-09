@@ -354,11 +354,21 @@ button.secondary:active { background: var(--primary); color: white; }
   background: #ffebee; color: var(--error); border-color: var(--error);
 }
 .seat-layout .seat.busy .occ {
-  position: absolute; bottom: 2px; left: 2px; right: 2px;
-  font-size: 10px; color: var(--error); line-height: 1.1;
+  position: absolute; bottom: 0; left: 0; right: 0;
+  font-size: 9px; line-height: 1.15;
   font-weight: 600; text-align: center;
-  text-overflow: ellipsis; overflow: hidden; white-space: nowrap;
+  padding: 1px 2px;
+  background: rgba(255,255,255,0.88);
+  border-radius: 0 0 6px 6px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
 }
+.seat .occ-time { font-weight: 700; color: #b71c1c; font-size: 10px; }
+.seat .occ-course { color: #555; font-size: 8.5px; line-height: 1.1; }
+.seat .occ-name { color: var(--text); font-size: 9px; }
+/* リボ（緑系busy）に合わせて時刻を緑に */
+.revo-seat-layout .seat.busy .occ { background: rgba(255,255,255,0.92); }
+.revo-seat-layout .seat .occ-time { color: #1b5e20; }
 .seat-layout .seat.has-booking {
   background: #fff4f5; border-color: #ffc1bd;
 }
@@ -1237,12 +1247,12 @@ const COMBINATIONS = [
 ];
 
 const COURSES = [
-  { id:'S', name:'席だけ予約', price:0, items:'—', minPeople:1, type:'席だけ', note:'単品オーダー' },
-  { id:'A', name:'料理のみ 2,200円', price:2200, items:'6品', minPeople:2, type:'料理のみ', note:'飲み物別' },
-  { id:'B', name:'料理のみ 3,300円', price:3300, items:'8品', minPeople:2, type:'料理のみ', note:'飲み物別' },
-  { id:'C', name:'飲み放題 5,500円', price:5500, items:'8品', minPeople:4, type:'飲み放題', note:'LO 100分' },
-  { id:'D', name:'飲み放題 6,600円', price:6600, items:'9品', minPeople:4, type:'飲み放題', note:'LO 100分' },
-  { id:'E', name:'飲み放題 7,700円', price:7700, items:'9品', minPeople:4, type:'飲み放題プレミアム', note:'LO 120分・GU' },
+  { id:'S', name:'席だけ予約', shortName:'', price:0, items:'—', minPeople:1, type:'席だけ', note:'単品オーダー' },
+  { id:'A', name:'料理のみ 2,200円', shortName:'料理2200', price:2200, items:'6品', minPeople:2, type:'料理のみ', note:'飲み物別' },
+  { id:'B', name:'料理のみ 3,300円', shortName:'料理3300', price:3300, items:'8品', minPeople:2, type:'料理のみ', note:'飲み物別' },
+  { id:'C', name:'飲み放題 5,500円', shortName:'飲放5500', price:5500, items:'8品', minPeople:4, type:'飲み放題', note:'LO 100分' },
+  { id:'D', name:'飲み放題 6,600円', shortName:'飲放6600', price:6600, items:'9品', minPeople:4, type:'飲み放題', note:'LO 100分' },
+  { id:'E', name:'飲み放題 7,700円', shortName:'飲放7700', price:7700, items:'9品', minPeople:4, type:'飲み放題プレミアム', note:'LO 120分・GU' },
 ];
 
 // ============================================================
@@ -1283,12 +1293,12 @@ const REVO_COMBINATIONS = [
 ];
 
 const REVO_COURSES = [
-  { id:'RS', name:'席のみ',             price:0,    items:'—', minPeople:1, type:'席のみ',           note:'単品オーダー' },
-  { id:'R1', name:'リボ飲み放題',        price:0,    items:'—', minPeople:2, type:'飲み放題',         note:'リボルバード定番ドリンク' },
-  { id:'R2', name:'クラフト飲み放題',    price:0,    items:'—', minPeople:2, type:'クラフト飲み放題', note:'クラフトビール含む' },
-  { id:'R3', name:'コラボプラン',        price:0,    items:'—', minPeople:2, type:'コラボ',           note:'鳥はしコラボ' },
-  { id:'R4', name:'コラボクラフトプラン', price:0,   items:'—', minPeople:2, type:'コラボクラフト',   note:'クラフトビール付き' },
-  { id:'R5', name:'女子会プラン',        price:0,    items:'—', minPeople:3, type:'女子会',           note:'女子向けセット' },
+  { id:'RS', name:'席のみ',             shortName:'',           price:0, items:'—', minPeople:1, type:'席のみ',           note:'単品オーダー' },
+  { id:'R1', name:'リボ飲み放題',        shortName:'リボ飲放',    price:0, items:'—', minPeople:2, type:'飲み放題',         note:'リボルバード定番ドリンク' },
+  { id:'R2', name:'クラフト飲み放題',    shortName:'クラフト',    price:0, items:'—', minPeople:2, type:'クラフト飲み放題', note:'クラフトビール含む' },
+  { id:'R3', name:'コラボプラン',        shortName:'コラボ',      price:0, items:'—', minPeople:2, type:'コラボ',           note:'鳥はしコラボ' },
+  { id:'R4', name:'コラボクラフトプラン', shortName:'コラボ飲放',  price:0, items:'—', minPeople:2, type:'コラボクラフト',   note:'クラフトビール付き' },
+  { id:'R5', name:'女子会プラン',        shortName:'女子会',      price:0, items:'—', minPeople:3, type:'女子会',           note:'女子向けセット' },
 ];
 
 // 予約フローの「推奨席候補」用：単卓 + 結合 + 大結合を全部含む
@@ -4738,9 +4748,13 @@ function _renderSeatMapImpl() {
     if (busyRes) {
       el.classList.add('busy');
       const r = busyRes;
+      const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+      const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
       const occ = document.createElement('div');
       occ.className = 'occ';
-      occ.textContent = r.name + (r.people ? '/' + r.people : '');
+      occ.innerHTML = '<span class="occ-time">' + (r.time || '') + '</span>'
+                   + (courseShort ? '<span class="occ-course">' + courseShort + '</span>' : '')
+                   + '<span class="occ-name">' + r.name + (r.people ? '/' + r.people : '') + '</span>';
       el.appendChild(occ);
     } else if (cellHasBooking) {
       el.classList.add('has-booking');
