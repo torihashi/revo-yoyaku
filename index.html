@@ -4948,15 +4948,22 @@ function handleSeatClick(seatId) {
     cancelMoveMode();
     return;
   }
-  // 該当時間で使用中なら → その予約を移動モード対象に
+  // 該当時間で使用中なら → その予約を移動モード対象に（現店舗のみ）
   const date = smState.date;
   const time = smState.time;
   const dayRes = reservations.filter(function(r) {
-    return r.date === date && r.status !== 'cancelled' && r.type !== 'takeout';
+    return (r.store || 'torihashi') === currentStore
+        && r.date === date && r.status !== 'cancelled' && r.type !== 'takeout';
   });
+  // 結合セル（R1+R2など）にも対応：セルのトークン展開と予約席のトークン展開が交差するか確認
+  const cellTokens = expandSeat(seatId);
   const r = dayRes.find(function(x) {
-    return Math.abs(timeDiff(x.time, time)) <= 60
-      && expandSeat(x.seat).indexOf(seatId) >= 0;
+    if (Math.abs(timeDiff(x.time, time)) > 60) return false;
+    if (x.seat === seatId) return true; // 直接一致
+    const resTokens = expandSeat(x.seat);
+    // 予約席のいずれかのトークンがセルに含まれる、または逆
+    return resTokens.some(function(t) { return cellTokens.indexOf(t) >= 0; })
+        || cellTokens.some(function(t) { return resTokens.indexOf(t) >= 0; });
   });
   if (r) {
     smState.moveResId = r.id;
