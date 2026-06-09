@@ -2853,6 +2853,18 @@ function checkAvailability() {
     sel.setAttribute('data-time', t);
     showSlotDetails(date, t, people);
   });
+
+  // 「空き時間を確認」を押した直後 → 時刻プルダウンへ自動スクロール
+  // ただし店舗切替などによる再描画時はスクロールしない（_suppressAutoAdvance フラグで判定）
+  if (!(state && state._suppressAutoAdvance)) {
+    setTimeout(function() {
+      try {
+        sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // プルダウンを開く（focus）
+        sel.focus({ preventScroll: true });
+      } catch (e) {}
+    }, 100);
+  }
 }
 
 // 1スロットの空き状況計算
