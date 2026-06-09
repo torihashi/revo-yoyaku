@@ -346,9 +346,11 @@ button.secondary:active { background: var(--primary); color: white; }
 .seat-layout .seat {
   border: 1.5px solid var(--border); border-radius: 8px;
   background: var(--primary-light); color: var(--primary-dark);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 3px;
   font-weight: 700; cursor: pointer; touch-action: manipulation;
   position: relative; user-select: none;
+  font-size: 14px;
 }
 .seat-layout .seat.busy {
   background: #ffebee; color: var(--error); border-color: var(--error);
@@ -445,9 +447,11 @@ button.secondary:active { background: var(--primary); color: white; }
 .revo-seat-layout .seat {
   border: 1.5px solid var(--border); border-radius: 8px;
   background: var(--primary-light); color: var(--primary-dark);
-  display: flex; align-items: center; justify-content: center; flex-direction: column;
+  display: flex; align-items: flex-start; justify-content: center; flex-direction: column;
+  padding-top: 3px; align-items: center;
   font-weight: 700; cursor: pointer; touch-action: manipulation;
   position: relative; user-select: none; text-align: center; line-height: 1.1;
+  font-size: 14px;
 }
 .revo-seat-layout .seat .seat-cap { font-size: 9px; font-weight: 500; opacity: 0.7; }
 /* 席が割り当てられた瞬間の強調アニメ（「変わった」感を出す） */
