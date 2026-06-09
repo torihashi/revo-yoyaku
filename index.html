@@ -440,6 +440,18 @@ button.secondary:active { background: var(--primary); color: white; }
   position: relative; user-select: none; text-align: center; line-height: 1.1;
 }
 .revo-seat-layout .seat .seat-cap { font-size: 9px; font-weight: 500; opacity: 0.7; }
+/* 席が割り当てられた瞬間の強調アニメ（「変わった」感を出す） */
+@keyframes seat-just-assigned {
+  0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.9); }
+  30%  { transform: scale(1.10); box-shadow: 0 0 0 8px rgba(46, 125, 50, 0.6); }
+  60%  { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(46, 125, 50, 0); }
+  100% { transform: scale(1);    box-shadow: 0 0 0 0 rgba(46, 125, 50, 0); }
+}
+.seat.just-assigned {
+  animation: seat-just-assigned 0.7s ease-out;
+  z-index: 5; position: relative;
+}
+
 /* リボは赤テーマなので、予約済みは緑で視認性UP（鳥はしとは逆の配色） */
 .revo-seat-layout .seat.busy { background: #c8e6c9; color: #1b5e20; border-color: #2e7d32; }
 .revo-seat-layout .seat.has-booking { background: #e8f5e9; border-color: #81c784; }
@@ -3682,6 +3694,8 @@ function openSeatEditor(resId, preselectSeat) {
     overlay.remove();
     renderReservationList();
     if (typeof renderSeatMap === 'function') renderSeatMap();
+    // 視覚フィードバック：割り当てた席をピカッと光らせる
+    if (typeof pulseAssignedSeats === 'function') pulseAssignedSeats(newSeat);
     // カレンダー側も席を同期
     if (isWebhookConfigured() && r.gcalEventId) {
       updateSyncStatus('席変更を同期中...', '#ef6c00');
@@ -5142,6 +5156,26 @@ function updatePreselectBanner() {
   }
 }
 
+// 指定席（および構成卓）のセルを 0.7秒間パルスアニメで強調
+function pulseAssignedSeats(seatStr) {
+  if (!seatStr) return;
+  const tokens = (typeof expandSeat === 'function') ? expandSeat(seatStr) : [seatStr];
+  const all = new Set([seatStr]);
+  tokens.forEach(function(t) { all.add(t); });
+  // 次フレームで実行（renderSeatMapと競合させない）
+  requestAnimationFrame(function() {
+    all.forEach(function(s) {
+      document.querySelectorAll('.seat[data-seat="' + s + '"]').forEach(function(cell) {
+        cell.classList.remove('just-assigned');
+        // リフロー強制で再生発火
+        void cell.offsetWidth;
+        cell.classList.add('just-assigned');
+        setTimeout(function() { cell.classList.remove('just-assigned'); }, 750);
+      });
+    });
+  });
+}
+
 function assignSeatToReservation(resId, newSeat) {
   const r = reservations.find(function(x) { return x.id === resId; });
   if (!r) return;
@@ -5163,6 +5197,8 @@ function assignSeatToReservation(resId, newSeat) {
   saveReservations();
   cancelMoveMode();
   renderSeatMap();
+  // 視覚フィードバック：割り当てた席をピカッと光らせる
+  pulseAssignedSeats(targetSeat);
   // Webhook 経由でカレンダーも更新
   if (isWebhookConfigured() && r.gcalEventId) {
     updateSyncStatus('席変更を同期中...', '#ef6c00');
