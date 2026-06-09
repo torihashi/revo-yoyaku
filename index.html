@@ -602,6 +602,49 @@ button.secondary:active { background: var(--primary); color: white; }
 .staff-unav-item .staff-name { font-weight: 700; text-decoration: line-through; opacity: 0.85; }
 .staff-unav-item .staff-unav-reason { font-size: 11px; opacity: 0.9; }
 
+/* 月間労働集計 */
+.labor-section {
+  margin-top: 10px; padding: 10px 12px;
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.labor-locked { font-size: 13px; color: var(--muted); }
+.labor-locked button {
+  padding: 6px 10px; font-size: 12px;
+  background: var(--primary); color: white;
+  border: none; border-radius: 6px; cursor: pointer;
+  font-family: inherit; font-weight: 700;
+}
+.labor-header {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 8px; flex-wrap: wrap;
+}
+.labor-title {
+  flex: 1; text-align: center;
+  font-weight: 700; font-size: 14px; color: var(--primary-dark);
+}
+.labor-nav, .labor-relock {
+  background: transparent; border: 1px solid var(--border);
+  padding: 4px 10px; border-radius: 6px;
+  cursor: pointer; font-family: inherit; font-size: 12px;
+  font-weight: 700; color: var(--text);
+}
+.labor-table {
+  width: 100%; border-collapse: collapse; font-size: 13px;
+}
+.labor-table th {
+  text-align: left; padding: 6px 8px;
+  background: var(--primary-light); color: var(--primary-dark);
+  font-weight: 700; border-bottom: 1px solid var(--border);
+}
+.labor-table td {
+  padding: 6px 8px; border-bottom: 1px solid #f0f0f0;
+}
+.labor-table tr:last-child td { border-bottom: none; }
+.labor-table .lb-name { font-weight: 700; }
+.labor-table .lb-num { text-align: right; font-variant-numeric: tabular-nums; }
+.labor-empty { padding: 12px; text-align: center; font-size: 12px; color: var(--muted); }
+
 /* シフト種類トグル */
 .shift-type-toggle {
   display: flex; gap: 6px; margin-bottom: 6px;
@@ -1078,6 +1121,28 @@ select.time-select option:disabled { color: #aaa; }
         <div class="staff-empty">読み込み中...</div>
       </div>
     </div>
+
+    <!-- 月間労働集計（パスワードロック） -->
+    <div class="labor-section" id="laborSection">
+      <div class="labor-locked" id="laborLocked">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span>🔒 月間労働集計</span>
+          <input type="password" id="laborPass" placeholder="パスワード" style="flex:1;padding:6px 8px;font-size:13px;border:1px solid var(--border);border-radius:6px" />
+          <button type="button" onclick="unlockLabor()">解錠</button>
+        </div>
+      </div>
+      <div class="labor-unlocked hidden" id="laborUnlocked">
+        <div class="labor-header">
+          <button type="button" class="labor-nav" onclick="changeLaborMonth(-1)">‹ 前月</button>
+          <span class="labor-title" id="laborTitle"></span>
+          <button type="button" class="labor-nav" onclick="changeLaborMonth(1)">翌月 ›</button>
+          <button type="button" class="labor-relock" onclick="relockLabor()" title="ロック">🔒</button>
+        </div>
+        <div id="laborContent">
+          <div class="labor-empty">読み込み中...</div>
+        </div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -1462,6 +1527,125 @@ function preloadEmployees() {
   fetchEmployees('revolverd', function() {});
 }
 
+// ============================================================
+// 月間労働集計（ロック付き）
+// ============================================================
+const LABOR_PASSWORD = 'torihashi'; // ★ パスワード（ここを変更）
+let _laborState = { year: null, month: null };
+
+function unlockLabor() {
+  const inp = document.getElementById('laborPass');
+  if (!inp) return;
+  if (inp.value !== LABOR_PASSWORD) {
+    alert('パスワードが違います');
+    inp.value = '';
+    return;
+  }
+  try { sessionStorage.setItem('laborUnlocked', '1'); } catch (e) {}
+  showLaborUnlocked();
+}
+function relockLabor() {
+  try { sessionStorage.removeItem('laborUnlocked'); } catch (e) {}
+  document.getElementById('laborLocked').classList.remove('hidden');
+  document.getElementById('laborUnlocked').classList.add('hidden');
+  const inp = document.getElementById('laborPass');
+  if (inp) inp.value = '';
+}
+function showLaborUnlocked() {
+  document.getElementById('laborLocked').classList.add('hidden');
+  document.getElementById('laborUnlocked').classList.remove('hidden');
+  // 初期は当月
+  if (!_laborState.year) {
+    const d = new Date();
+    _laborState.year = d.getFullYear();
+    _laborState.month = d.getMonth() + 1;
+  }
+  renderLaborMonth();
+}
+function changeLaborMonth(delta) {
+  _laborState.month += delta;
+  if (_laborState.month < 1) { _laborState.month = 12; _laborState.year--; }
+  if (_laborState.month > 12) { _laborState.month = 1; _laborState.year++; }
+  renderLaborMonth();
+}
+function renderLaborMonth() {
+  const titleEl = document.getElementById('laborTitle');
+  const contentEl = document.getElementById('laborContent');
+  if (!titleEl || !contentEl) return;
+  titleEl.textContent = _laborState.year + '年 ' + _laborState.month + '月（' + getStoreLabel() + '）';
+  contentEl.innerHTML = '<div class="labor-empty">取得中...</div>';
+
+  if (!isWebhookConfigured()) {
+    contentEl.innerHTML = '<div class="labor-empty">Webhook未設定</div>';
+    return;
+  }
+  const url = WEBHOOK_URL
+    + '?action=listMonthlyLabor'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&store=' + encodeURIComponent(currentStore)
+    + '&year=' + _laborState.year
+    + '&month=' + _laborState.month;
+  fetch(url).then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data || !data.ok) {
+        contentEl.innerHTML = '<div class="labor-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
+        return;
+      }
+      if (!data.items || data.items.length === 0) {
+        contentEl.innerHTML = '<div class="labor-empty">この月の勤怠データがありません</div>';
+        return;
+      }
+      // 合計値計算
+      let totDays = 0, totMin = 0;
+      data.items.forEach(function(it) {
+        totDays += it.workDays;
+        totMin += it.totalMinutes;
+      });
+      const fmtH = function(min) {
+        const h = Math.floor(min / 60);
+        const m = min % 60;
+        return h + 'h ' + (m > 0 ? m + 'm' : '');
+      };
+      let html = '<table class="labor-table">'
+        + '<thead><tr><th>従業員名</th><th class="lb-num">日数</th><th class="lb-num">時間</th></tr></thead>'
+        + '<tbody>';
+      data.items.forEach(function(it) {
+        html += '<tr>'
+          + '<td class="lb-name">' + it.name + '</td>'
+          + '<td class="lb-num">' + it.workDays + '日</td>'
+          + '<td class="lb-num">' + fmtH(it.totalMinutes) + '</td>'
+          + '</tr>';
+      });
+      html += '<tr style="background:var(--primary-light);font-weight:700">'
+        + '<td>合計</td>'
+        + '<td class="lb-num">' + totDays + '日</td>'
+        + '<td class="lb-num">' + fmtH(totMin) + '</td>'
+        + '</tr>';
+      html += '</tbody></table>';
+      contentEl.innerHTML = html;
+    })
+    .catch(function(err) {
+      contentEl.innerHTML = '<div class="labor-empty">通信エラー</div>';
+    });
+}
+
+// セッション継続中はロック解除状態を保持
+function initLaborSection() {
+  try {
+    if (sessionStorage.getItem('laborUnlocked') === '1') {
+      showLaborUnlocked();
+    }
+  } catch (e) {}
+}
+
+// 起動時に当日の両店舗のシフト一覧を裏でプリロード（モーダルを高速化）
+function preloadStaffSchedules() {
+  if (!isWebhookConfigured()) return;
+  const today = todayStr();
+  fetchStaffSchedule(today, 'torihashi', function() {});
+  fetchStaffSchedule(today, 'revolverd', function() {});
+}
+
 // 休業日キャッシュ
 const HOLIDAY_CACHE_KEY = 'torihashi_holiday_cache_v1';
 function _loadHolidayCacheFromStorage() {
@@ -1668,8 +1852,18 @@ function openStaffShiftModal() {
       title = name;
     }
 
-    document.getElementById('saveShiftBtn').disabled = true;
-    document.getElementById('saveShiftBtn').textContent = '登録中...';
+    // 楽観的UI：① モーダル即閉じ ② キャッシュへ即追加 ③ レール即再描画 ④ 裏でGAS同期
+    const optimisticItem = {
+      id: 'tmp-' + Date.now(),
+      name: title,
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    };
+    optimisticAddStaffShift(date, currentStore, optimisticItem);
+    overlay.remove();
+    try { renderStaffRail(); } catch (e) {}
+    updateSyncStatus(currentType === 'unav' ? '不可登録中...' : 'シフト登録中...', '#ef6c00');
+
     callWebhook({
       action: 'createStaffShift',
       store: currentStore,
@@ -1678,36 +1872,79 @@ function openStaffShiftModal() {
       end: endDate.toISOString()
     }).then(function(resp) {
       if (resp.ok) {
-        overlay.remove();
         updateSyncStatus(currentType === 'unav' ? '✓ 不可登録OK' : '✓ シフト追加OK', '#2e7d32');
         setTimeout(function() { updateSyncStatus(''); }, 2500);
+        // キャッシュをクリアして再フェッチ（IDが本物に置き換わる）
+        delete _staffSchedCache[_staffKey(date, currentStore)];
         try { renderStaffRail(); } catch (e) {}
       } else {
+        // 失敗時はキャッシュから楽観追加分を取り除く
+        const key = _staffKey(date, currentStore);
+        if (_staffSchedCache[key]) {
+          _staffSchedCache[key].items = _staffSchedCache[key].items.filter(function(it) {
+            return it.id !== optimisticItem.id;
+          });
+        }
+        try { renderStaffRail(); } catch (e) {}
+        updateSyncStatus('⚠ 登録失敗', '#c62828');
+        setTimeout(function() { updateSyncStatus(''); }, 3500);
         alert('登録に失敗しました: ' + (resp.error || ''));
-        document.getElementById('saveShiftBtn').disabled = false;
-        document.getElementById('saveShiftBtn').textContent = currentType === 'unav' ? '❌ 不可を登録' : '📅 シフトを登録';
       }
     });
   });
 }
 
-// スタッフシフトを取得（バイトカレンダー）
+// スタッフシフトのメモリキャッシュ（date+store キー）
+const _staffSchedCache = {};       // key → { items, ts }
+const _staffSchedInflight = {};    // key → Promise
+function _staffKey(date, store) { return store + '|' + date; }
+
+// スタッフシフトを取得（キャッシュ即返し＋裏で最新化）
 function fetchStaffSchedule(date, store, callback) {
-  if (!isWebhookConfigured()) { if (callback) callback([]); return; }
+  const key = _staffKey(date, store);
+  const cached = _staffSchedCache[key];
+  if (cached && callback) callback(cached.items);
+
+  if (!isWebhookConfigured()) {
+    if (!cached && callback) callback([]);
+    return;
+  }
+  // 既に進行中のフェッチがあれば使い回す
+  if (_staffSchedInflight[key]) {
+    _staffSchedInflight[key].then(function(items) {
+      if (callback && (!cached || JSON.stringify(cached.items) !== JSON.stringify(items))) {
+        callback(items);
+      }
+    });
+    return;
+  }
   const url = WEBHOOK_URL
     + '?action=listStaff'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
     + '&store=' + encodeURIComponent(store)
     + '&date=' + encodeURIComponent(date);
-  fetch(url).then(function(r) { return r.json(); })
+  _staffSchedInflight[key] = fetch(url).then(function(r) { return r.json(); })
     .then(function(data) {
-      if (data && data.ok && Array.isArray(data.items)) {
-        if (callback) callback(data.items);
-      } else {
-        if (callback) callback([]);
-      }
+      const items = (data && data.ok && Array.isArray(data.items)) ? data.items : [];
+      _staffSchedCache[key] = { items: items, ts: Date.now() };
+      return items;
     })
-    .catch(function(err) { if (callback) callback([]); });
+    .catch(function() { return cached ? cached.items : []; })
+    .finally(function() { delete _staffSchedInflight[key]; });
+
+  _staffSchedInflight[key].then(function(items) {
+    if (callback && (!cached || JSON.stringify(cached.items) !== JSON.stringify(items))) {
+      callback(items);
+    }
+  });
+}
+
+// 楽観的にキャッシュに即追加（GAS応答を待たない）
+function optimisticAddStaffShift(date, store, item) {
+  const key = _staffKey(date, store);
+  if (!_staffSchedCache[key]) _staffSchedCache[key] = { items: [], ts: Date.now() };
+  _staffSchedCache[key].items.push(item);
+  _staffSchedCache[key].ts = Date.now();
 }
 
 // タイムカード（出退勤実績）取得
@@ -2085,6 +2322,12 @@ function setCurrentStore(store) {
   if (tori) tori.classList.toggle('hidden', store !== 'torihashi');
   if (revo) revo.classList.toggle('hidden', store !== 'revolverd');
 
+  // 月間労働集計が解錠中なら現店舗で再描画
+  try {
+    const lu = document.getElementById('laborUnlocked');
+    if (lu && !lu.classList.contains('hidden')) renderLaborMonth();
+  } catch (e) {}
+
   // 新規予約タブの空き判定結果を新しい店舗のロジックで再計算
   // （既に「空き時間を確認」を押している状態なら、推奨席候補が前店舗のものになるため）
   try { refreshAvailabilityForStoreChange(); } catch (e) {}
@@ -2438,6 +2681,11 @@ window.addEventListener('DOMContentLoaded', () => {
     try { preloadEmployees(); } catch (e) {}
   }
 
+  // 当日のシフトも裏でプリロード（シフトレールを高速化）
+  if (typeof preloadStaffSchedules === 'function') {
+    try { preloadStaffSchedules(); } catch (e) {}
+  }
+
   // 両店舗の休業日をカレンダーから同期
   if (typeof preloadHolidays === 'function') {
     try { preloadHolidays(); } catch (e) {}
@@ -2459,6 +2707,11 @@ window.addEventListener('DOMContentLoaded', () => {
   // インラインカレンダー（全画面）
   if (typeof initAllCalendars === 'function') {
     try { initAllCalendars(); } catch (e) {}
+  }
+
+  // 月間労働集計セクション初期化
+  if (typeof initLaborSection === 'function') {
+    try { initLaborSection(); } catch (e) {}
   }
 
   // GCalから初回プル → 自動同期開始
