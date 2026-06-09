@@ -584,6 +584,38 @@ button.secondary:active { background: var(--primary); color: white; }
 .staff-rail .staff-item.staff-actual .staff-time {
   color: #1b5e20;
 }
+.staff-unav-section {
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1.5px dashed #d3d3d3;
+}
+.staff-unav-header {
+  font-size: 12px; font-weight: 700; color: #c62828;
+  margin-bottom: 6px;
+}
+.staff-unav-item {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-right: 8px; margin-bottom: 4px;
+  font-size: 12px; padding: 4px 8px;
+  background: #ffebee; border: 1px solid #ffcdd2;
+  border-radius: 6px; color: #c62828;
+}
+.staff-unav-item .staff-name { font-weight: 700; text-decoration: line-through; opacity: 0.85; }
+.staff-unav-item .staff-unav-reason { font-size: 11px; opacity: 0.9; }
+
+/* シフト種類トグル */
+.shift-type-toggle {
+  display: flex; gap: 6px; margin-bottom: 6px;
+}
+.shift-type-btn {
+  flex: 1; padding: 8px; border: 1.5px solid var(--border);
+  background: white; color: var(--muted); font-weight: 700;
+  border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 13px;
+  transition: background .15s;
+}
+.shift-type-btn.active {
+  background: var(--primary); color: white; border-color: var(--primary);
+}
+.shift-type-btn:active { transform: scale(0.97); }
 .to-slot strong { font-size: 13px; color: var(--primary-dark); }
 .to-slot .meta { color: var(--muted); font-size: 11px; }
 
@@ -1530,22 +1562,54 @@ function openStaffShiftModal() {
     : '<option value="">初回のみ読み込み中（数秒）...</option>';
 
   overlay.innerHTML =
-    '<div class="modal" style="max-width:420px">'
-    + '<h3>シフトを追加（' + getStoreLabel() + '）</h3>'
+    '<div class="modal" style="max-width:440px">'
+    + '<h3>シフト追加 / 不可登録（' + getStoreLabel() + '）</h3>'
     + '<div style="margin-bottom:10px;font-size:13px;color:var(--muted);">対象日：<strong style="color:var(--text)">' + date + '</strong></div>'
+    // 種類トグル
+    + '<div class="field" style="margin-bottom:8px">'
+    +   '<label>種類</label>'
+    +   '<div class="shift-type-toggle">'
+    +     '<button type="button" id="typeShift" class="shift-type-btn active" data-type="shift">📅 出勤</button>'
+    +     '<button type="button" id="typeUnav" class="shift-type-btn" data-type="unav">❌ 不可</button>'
+    +   '</div>'
+    + '</div>'
     + '<div class="field">'
     +   '<label>従業員<span class="req">*</span></label>'
     +   '<select id="shiftEmployee" style="width:100%">' + initialOptions + '</select>'
     + '</div>'
-    + '<div class="field">'
+    // 開始時刻（出勤モード時のみ表示）
+    + '<div class="field" id="shiftStartField">'
     +   '<label>開始時刻<span class="req">*</span></label>'
     +   '<select id="shiftStart" style="width:100%">' + makeTimeOptions(17) + '</select>'
     +   '<div class="hint">退勤時刻はタイムカード連携で自動更新されます</div>'
+    + '</div>'
+    // 理由（不可モード時のみ表示）
+    + '<div class="field hidden" id="unavReasonField">'
+    +   '<label>理由（任意）</label>'
+    +   '<input type="text" id="unavReason" placeholder="例：早番だめ、終日NG、私用など" />'
+    +   '<div class="hint">空欄なら「終日不可」として登録</div>'
     + '</div>'
     + '<button class="primary" id="saveShiftBtn">📅 カレンダーに登録</button>'
     + '<button class="secondary" id="closeShiftBtn">キャンセル</button>'
     + '</div>';
   document.body.appendChild(overlay);
+
+  // その日の不可リストを取得 → プルダウンに❌マークを付ける
+  let unavSet = {};
+  fetchStaffSchedule(date, currentStore, function(items) {
+    unavSet = {};
+    (items || []).forEach(function(s) {
+      if (s.name && s.name.indexOf('❌') === 0) {
+        // 名前抽出
+        const rest = s.name.substring(1).trim();
+        const m = rest.match(/^(.+?)\s*[（(]/);
+        const n = m ? m[1] : rest;
+        unavSet[n] = true;
+      }
+    });
+    // 再描画
+    if (cachedEmps && cachedEmps.length > 0) renderEmployeeOptions(cachedEmps);
+  });
 
   // 従業員マスタ取得（キャッシュがあれば即時表示、裏で最新化）
   const renderEmployeeOptions = function(employees) {
@@ -1558,7 +1622,8 @@ function openStaffShiftModal() {
     }
     sel.innerHTML = '<option value="">▼ 選択してください</option>'
       + employees.map(function(e) {
-        return '<option value="' + e.name + '">' + e.name + '</option>';
+        const mark = unavSet[e.name] ? '❌ ' : '';
+        return '<option value="' + e.name + '">' + mark + e.name + '</option>';
       }).join('');
     if (currentValue) sel.value = currentValue;
   };
@@ -1568,36 +1633,59 @@ function openStaffShiftModal() {
     overlay.remove();
   });
 
+  // 種類トグル
+  let currentType = 'shift';
+  function setType(type) {
+    currentType = type;
+    document.getElementById('typeShift').classList.toggle('active', type === 'shift');
+    document.getElementById('typeUnav').classList.toggle('active', type === 'unav');
+    document.getElementById('shiftStartField').classList.toggle('hidden', type !== 'shift');
+    document.getElementById('unavReasonField').classList.toggle('hidden', type !== 'unav');
+    const btn = document.getElementById('saveShiftBtn');
+    if (type === 'shift') btn.textContent = '📅 シフトを登録';
+    else btn.textContent = '❌ 不可を登録';
+  }
+  document.getElementById('typeShift').addEventListener('click', function() { setType('shift'); });
+  document.getElementById('typeUnav').addEventListener('click', function() { setType('unav'); });
+
   document.getElementById('saveShiftBtn').addEventListener('click', function() {
     const name = document.getElementById('shiftEmployee').value;
-    const startTime = document.getElementById('shiftStart').value;
     if (!name) { alert('従業員を選択してください'); return; }
-    if (!startTime) { alert('開始時刻を選んでください'); return; }
 
-    // 開始日時 / 終了は同時刻（カレンダー上は "18:00～18:00" 表示）
-    const startStr = date + 'T' + startTime + ':00+09:00';
-    const startDate = new Date(startStr);
-    const endDate = new Date(startDate.getTime()); // 同時刻
+    let title, startDate, endDate;
+    if (currentType === 'unav') {
+      // 不可登録：終日扱い（タイトル先頭に❌＋理由）
+      const reason = (document.getElementById('unavReason').value || '').trim();
+      title = '❌' + name + (reason ? '（' + reason + '）' : '（終日不可）');
+      startDate = new Date(date + 'T00:00:00+09:00');
+      endDate = new Date(date + 'T00:00:00+09:00');
+    } else {
+      const startTime = document.getElementById('shiftStart').value;
+      if (!startTime) { alert('開始時刻を選んでください'); return; }
+      const startStr = date + 'T' + startTime + ':00+09:00';
+      startDate = new Date(startStr);
+      endDate = new Date(startDate.getTime());
+      title = name;
+    }
 
     document.getElementById('saveShiftBtn').disabled = true;
     document.getElementById('saveShiftBtn').textContent = '登録中...';
     callWebhook({
       action: 'createStaffShift',
       store: currentStore,
-      name: name,
+      name: title,
       start: startDate.toISOString(),
       end: endDate.toISOString()
     }).then(function(resp) {
       if (resp.ok) {
         overlay.remove();
-        updateSyncStatus('✓ シフト追加OK', '#2e7d32');
+        updateSyncStatus(currentType === 'unav' ? '✓ 不可登録OK' : '✓ シフト追加OK', '#2e7d32');
         setTimeout(function() { updateSyncStatus(''); }, 2500);
-        // シフトレールを再描画
         try { renderStaffRail(); } catch (e) {}
       } else {
         alert('登録に失敗しました: ' + (resp.error || ''));
         document.getElementById('saveShiftBtn').disabled = false;
-        document.getElementById('saveShiftBtn').textContent = '📅 カレンダーに登録';
+        document.getElementById('saveShiftBtn').textContent = currentType === 'unav' ? '❌ 不可を登録' : '📅 シフトを登録';
       }
     });
   });
@@ -1670,9 +1758,27 @@ function renderStaffRail() {
       return;
     }
 
-    // 表示用エントリ：カレンダー予定の人 + タイムカードのみの人（カレンダー未登録）
-    const entries = [];
+    // 「❌」プレフィックスの不可登録エントリを抽出
+    const unavailable = [];
+    const normalShifts = [];
     shifts.forEach(function(s) {
+      if (s.name && s.name.indexOf('❌') === 0) {
+        // 名前と理由を抽出：「❌大竹千秋（早番だめ）」
+        const rest = s.name.substring(1).trim();
+        const m = rest.match(/^(.+?)\s*[（(]\s*(.+?)\s*[)）]\s*$/);
+        if (m) {
+          unavailable.push({ name: m[1], reason: m[2] });
+        } else {
+          unavailable.push({ name: rest, reason: '' });
+        }
+      } else {
+        normalShifts.push(s);
+      }
+    });
+
+    // 表示用エントリ：通常シフトの人 + タイムカードのみの人
+    const entries = [];
+    normalShifts.forEach(function(s) {
       const t = new Date(s.start);
       const plannedStart = String(t.getHours()).padStart(2,'0') + ':' + String(t.getMinutes()).padStart(2,'0');
       const tc = tcByName[s.name];
@@ -1686,7 +1792,6 @@ function renderStaffRail() {
       });
       if (tc) delete tcByName[s.name];
     });
-    // タイムカードのみ（シフト未登録だけど実勤務あり）
     Object.keys(tcByName).forEach(function(name) {
       const tc = tcByName[name];
       entries.push({
@@ -1698,15 +1803,13 @@ function renderStaffRail() {
         startTimeForSort: tc.startTime
       });
     });
-    // 時刻順
     entries.sort(function(a, b) { return (a.startTimeForSort || '').localeCompare(b.startTimeForSort || ''); });
 
-    content.innerHTML = entries.map(function(e) {
-      // 表示優先：タイムカード実績 > 予定
+    // 通常シフト＋タイムカード表示
+    let html = entries.map(function(e) {
       let timeLabel = '';
       let hasActual = false;
       if (e.segments && e.segments.length > 0) {
-        // 中抜け対応：複数セグメントを「11:00-14:00 / 17:00〜」のように連結
         timeLabel = e.segments.map(function(seg) {
           if (seg.start && seg.end) return seg.start + '-' + seg.end;
           if (seg.start) return seg.start + '〜（勤務中）';
@@ -1725,6 +1828,20 @@ function renderStaffRail() {
            +   '<span class="staff-name">' + e.name + '</span>'
            + '</div>';
     }).join('');
+
+    // 不可リスト（あれば下部に表示）
+    if (unavailable.length > 0) {
+      html += '<div class="staff-unav-section">'
+           +   '<div class="staff-unav-header">❌ 本日出られないスタッフ</div>'
+           +   unavailable.map(function(u) {
+                 return '<div class="staff-unav-item">'
+                      +   '<span class="staff-name">' + u.name + '</span>'
+                      +   (u.reason ? '<span class="staff-unav-reason">（' + u.reason + '）</span>' : '')
+                      + '</div>';
+               }).join('')
+           + '</div>';
+    }
+    content.innerHTML = html;
   });
 }
 
