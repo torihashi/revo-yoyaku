@@ -631,11 +631,26 @@ button.secondary:active { background: var(--primary); color: white; }
 .staff-unav-item .staff-name { font-weight: 700; text-decoration: line-through; opacity: 0.85; }
 .staff-unav-item .staff-unav-reason { font-size: 11px; opacity: 0.9; }
 
-/* 個別シフト履歴（labor-unlocked内に表示） */
+/* 個別シフト一覧（公開版・チップ） */
+.staff-history-section {
+  margin-top: 10px; padding: 10px 12px;
+  background: #fff; border: 1px solid var(--border);
+  border-radius: 8px;
+}
+/* 個別シフト詳細（labor-unlocked内・時間詳細） */
 .staff-history-inner {
   margin-top: 12px; padding-top: 12px;
   border-top: 2px dashed var(--border);
 }
+.hist-day-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 5px 8px; border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+}
+.hist-day-row:last-child { border-bottom: none; }
+.hist-day-date { font-weight: 700; min-width: 76px; color: var(--text); }
+.hist-day-segs { flex: 1; color: var(--muted); font-size: 11px; padding: 0 8px; }
+.hist-day-total { font-weight: 700; color: var(--primary-dark); font-variant-numeric: tabular-nums; }
 .staff-history-header {
   font-size: 13px; font-weight: 700; color: var(--primary-dark);
   margin-bottom: 8px;
@@ -1237,6 +1252,20 @@ select.time-select option:disabled { color: #aaa; }
       </div>
     </div>
 
+    <!-- 個別シフト一覧（公開・日付チップのみ） -->
+    <div class="staff-history-section">
+      <div class="staff-history-header">📅 各バイトシフト一覧</div>
+      <div class="staff-history-controls">
+        <select id="staffHistoryChipName" style="flex:2"><option value="">▼ 従業員を選択</option></select>
+        <button type="button" class="hist-nav" onclick="changeStaffHistoryChipMonth(-1)">‹</button>
+        <span id="staffHistoryChipMonth" class="hist-month"></span>
+        <button type="button" class="hist-nav" onclick="changeStaffHistoryChipMonth(1)">›</button>
+      </div>
+      <div id="staffHistoryChipContent">
+        <div class="staff-empty">従業員を選択してください</div>
+      </div>
+    </div>
+
     <!-- 月間労働集計（パスワードロック） -->
     <div class="labor-section" id="laborSection">
       <div class="labor-locked" id="laborLocked">
@@ -1257,16 +1286,16 @@ select.time-select option:disabled { color: #aaa; }
           <div class="labor-empty">読み込み中...</div>
         </div>
 
-        <!-- 個別シフト履歴（管理者のみ閲覧） -->
+        <!-- 個別シフト詳細（管理者のみ・時間詳細） -->
         <div class="staff-history-inner">
-          <div class="staff-history-header" style="margin-top:12px">📅 個別シフト一覧</div>
+          <div class="staff-history-header" style="margin-top:12px">📅 個別シフト詳細（時間・合計）</div>
           <div class="staff-history-controls">
-            <select id="staffHistoryName" style="flex:2"><option value="">▼ 従業員を選択</option></select>
-            <button type="button" class="hist-nav" onclick="changeStaffHistoryMonth(-1)">‹</button>
-            <span id="staffHistoryMonth" class="hist-month"></span>
-            <button type="button" class="hist-nav" onclick="changeStaffHistoryMonth(1)">›</button>
+            <select id="staffHistoryDetailName" style="flex:2"><option value="">▼ 従業員を選択</option></select>
+            <button type="button" class="hist-nav" onclick="changeStaffHistoryDetailMonth(-1)">‹</button>
+            <span id="staffHistoryDetailMonth" class="hist-month"></span>
+            <button type="button" class="hist-nav" onclick="changeStaffHistoryDetailMonth(1)">›</button>
           </div>
-          <div id="staffHistoryContent">
+          <div id="staffHistoryDetailContent">
             <div class="staff-empty">従業員を選択してください</div>
           </div>
         </div>
@@ -1657,32 +1686,29 @@ function preloadEmployees() {
 }
 
 // ============================================================
-// 個別シフト履歴
+// 個別シフト履歴（公開：チップ表示 + 管理者：時間詳細表示）
 // ============================================================
-let _staffHistoryState = { year: null, month: null, name: '' };
+let _staffHistoryChipState   = { year: null, month: null, name: '' };
+let _staffHistoryDetailState = { year: null, month: null, name: '' };
 
 function initStaffHistorySection() {
-  // 初期月＝当月
   const d = new Date();
-  _staffHistoryState.year = d.getFullYear();
-  _staffHistoryState.month = d.getMonth() + 1;
-  // 従業員プルダウン更新
-  populateStaffHistoryDropdown();
-  // 表示
-  updateStaffHistoryMonthLabel();
-  // 名前選択時のイベント
-  const sel = document.getElementById('staffHistoryName');
-  if (sel && !sel._bound) {
-    sel._bound = true;
-    sel.addEventListener('change', function() {
-      _staffHistoryState.name = sel.value;
-      renderStaffHistory();
-    });
-  }
+  // 両State初期化（当月）
+  _staffHistoryChipState.year   = d.getFullYear();
+  _staffHistoryChipState.month  = d.getMonth() + 1;
+  _staffHistoryDetailState.year  = d.getFullYear();
+  _staffHistoryDetailState.month = d.getMonth() + 1;
+
+  // 公開チップ側
+  populateStaffHistoryDropdown('staffHistoryChipName', _staffHistoryChipState, renderStaffHistoryChips);
+  updateStaffHistoryMonthLabel('staffHistoryChipMonth', _staffHistoryChipState);
+  // 詳細側
+  populateStaffHistoryDropdown('staffHistoryDetailName', _staffHistoryDetailState, renderStaffHistoryDetail);
+  updateStaffHistoryMonthLabel('staffHistoryDetailMonth', _staffHistoryDetailState);
 }
 
-function populateStaffHistoryDropdown() {
-  const sel = document.getElementById('staffHistoryName');
+function populateStaffHistoryDropdown(selId, state, renderFn) {
+  const sel = document.getElementById(selId);
   if (!sel) return;
   const cached = getCachedEmployees(currentStore) || [];
   const currentValue = sel.value;
@@ -1693,48 +1719,71 @@ function populateStaffHistoryDropdown() {
   if (currentValue && cached.find(function(e) { return e.name === currentValue; })) {
     sel.value = currentValue;
   } else {
-    _staffHistoryState.name = '';
+    state.name = '';
   }
-  // キャッシュが空ならフェッチ後に再描画
+  // イベント結線（一度だけ）
+  if (!sel._bound) {
+    sel._bound = true;
+    sel.addEventListener('change', function() {
+      state.name = sel.value;
+      renderFn();
+    });
+  }
+  // キャッシュ未取得ならフェッチ後に再描画
   if (cached.length === 0) {
-    fetchEmployees(currentStore, function() { populateStaffHistoryDropdown(); });
+    fetchEmployees(currentStore, function() {
+      populateStaffHistoryDropdown(selId, state, renderFn);
+    });
   }
 }
 
-function changeStaffHistoryMonth(delta) {
-  _staffHistoryState.month += delta;
-  if (_staffHistoryState.month < 1) { _staffHistoryState.month = 12; _staffHistoryState.year--; }
-  if (_staffHistoryState.month > 12) { _staffHistoryState.month = 1; _staffHistoryState.year++; }
-  updateStaffHistoryMonthLabel();
-  renderStaffHistory();
-}
-
-function updateStaffHistoryMonthLabel() {
-  const lbl = document.getElementById('staffHistoryMonth');
+function updateStaffHistoryMonthLabel(lblId, state) {
+  const lbl = document.getElementById(lblId);
   if (!lbl) return;
-  lbl.textContent = _staffHistoryState.year + '年 ' + _staffHistoryState.month + '月';
+  lbl.textContent = state.year + '年 ' + state.month + '月';
 }
 
-function renderStaffHistory() {
-  const content = document.getElementById('staffHistoryContent');
-  if (!content) return;
-  if (!_staffHistoryState.name) {
-    content.innerHTML = '<div class="staff-empty">従業員を選択してください</div>';
-    return;
-  }
-  content.innerHTML = '<div class="staff-empty">取得中...</div>';
-  if (!isWebhookConfigured()) {
-    content.innerHTML = '<div class="staff-empty">Webhook未設定</div>';
-    return;
-  }
+function changeStaffHistoryChipMonth(delta) {
+  _staffHistoryChipState.month += delta;
+  if (_staffHistoryChipState.month < 1)  { _staffHistoryChipState.month = 12; _staffHistoryChipState.year--; }
+  if (_staffHistoryChipState.month > 12) { _staffHistoryChipState.month = 1;  _staffHistoryChipState.year++; }
+  updateStaffHistoryMonthLabel('staffHistoryChipMonth', _staffHistoryChipState);
+  renderStaffHistoryChips();
+}
+function changeStaffHistoryDetailMonth(delta) {
+  _staffHistoryDetailState.month += delta;
+  if (_staffHistoryDetailState.month < 1)  { _staffHistoryDetailState.month = 12; _staffHistoryDetailState.year--; }
+  if (_staffHistoryDetailState.month > 12) { _staffHistoryDetailState.month = 1;  _staffHistoryDetailState.year++; }
+  updateStaffHistoryMonthLabel('staffHistoryDetailMonth', _staffHistoryDetailState);
+  renderStaffHistoryDetail();
+}
+
+// 共通フェッチ
+function _fetchStaffMonthDays(state, callback) {
+  if (!isWebhookConfigured()) { callback({ ok: false, error: 'Webhook未設定' }); return; }
+  if (!state.name) { callback(null); return; }
   const url = WEBHOOK_URL
     + '?action=listStaffMonthDays'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
     + '&store=' + encodeURIComponent(currentStore)
-    + '&name=' + encodeURIComponent(_staffHistoryState.name)
-    + '&year=' + _staffHistoryState.year
-    + '&month=' + _staffHistoryState.month;
-  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    + '&name=' + encodeURIComponent(state.name)
+    + '&year=' + state.year
+    + '&month=' + state.month;
+  fetch(url).then(function(r) { return r.json(); }).then(callback).catch(function() {
+    callback({ ok: false, error: '通信エラー' });
+  });
+}
+
+// 公開：チップ表示（日付のみ）
+function renderStaffHistoryChips() {
+  const content = document.getElementById('staffHistoryChipContent');
+  if (!content) return;
+  if (!_staffHistoryChipState.name) {
+    content.innerHTML = '<div class="staff-empty">従業員を選択してください</div>';
+    return;
+  }
+  content.innerHTML = '<div class="staff-empty">取得中...</div>';
+  _fetchStaffMonthDays(_staffHistoryChipState, function(data) {
     if (!data || !data.ok) {
       content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
       return;
@@ -1744,7 +1793,6 @@ function renderStaffHistory() {
       return;
     }
     const wd = ['日','月','火','水','木','金','土'];
-    // 日付のみの一覧（チップ風）：5/1（木）, 5/3（土）...
     const chips = data.items.map(function(it) {
       const d = new Date(it.date);
       const dayOfWeek = wd[d.getDay()];
@@ -1755,8 +1803,53 @@ function renderStaffHistory() {
     }).join('');
     content.innerHTML = '<div class="hist-chips">' + chips + '</div>'
       + '<div class="hist-summary"><span>出勤日数</span><span>' + data.items.length + '日</span></div>';
-  }).catch(function() {
-    content.innerHTML = '<div class="staff-empty">通信エラー</div>';
+  });
+}
+
+// 管理者：詳細表示（時間・合計）
+function renderStaffHistoryDetail() {
+  const content = document.getElementById('staffHistoryDetailContent');
+  if (!content) return;
+  if (!_staffHistoryDetailState.name) {
+    content.innerHTML = '<div class="staff-empty">従業員を選択してください</div>';
+    return;
+  }
+  content.innerHTML = '<div class="staff-empty">取得中...</div>';
+  _fetchStaffMonthDays(_staffHistoryDetailState, function(data) {
+    if (!data || !data.ok) {
+      content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
+      return;
+    }
+    if (!data.items || data.items.length === 0) {
+      content.innerHTML = '<div class="staff-empty">この月の勤怠データがありません</div>';
+      return;
+    }
+    const wd = ['日','月','火','水','木','金','土'];
+    const fmtH = function(min) {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
+    };
+    let totalMin = 0;
+    let html = '';
+    data.items.forEach(function(it) {
+      const d = new Date(it.date);
+      const dateLabel = String(d.getMonth() + 1) + '/' + String(d.getDate()) + '（' + wd[d.getDay()] + '）';
+      const segsLabel = it.segments.map(function(seg) {
+        if (seg.start && seg.end) return seg.start + '-' + seg.end;
+        if (seg.start) return seg.start + '〜';
+        if (seg.end) return '?-' + seg.end;
+        return '';
+      }).filter(Boolean).join(' / ');
+      totalMin += it.totalMinutes || 0;
+      html += '<div class="hist-day-row">'
+        + '<span class="hist-day-date">' + dateLabel + '</span>'
+        + '<span class="hist-day-segs">' + segsLabel + '</span>'
+        + '<span class="hist-day-total">' + fmtH(it.totalMinutes || 0) + '</span>'
+        + '</div>';
+    });
+    html += '<div class="hist-summary"><span>合計</span><span>' + data.items.length + '日 / ' + fmtH(totalMin) + '</span></div>';
+    content.innerHTML = html;
   });
 }
 
@@ -2675,14 +2768,18 @@ function setCurrentStore(store) {
     if (lu && !lu.classList.contains('hidden')) renderLaborMonth();
   } catch (e) {}
 
-  // 個別シフト履歴：従業員プルダウンを新店舗に切替
+  // 個別シフト履歴：従業員プルダウンを新店舗に切替（両セクション）
   try {
-    populateStaffHistoryDropdown();
-    // 名前選択中ならクリアして表示も更新
-    _staffHistoryState.name = '';
-    const sel = document.getElementById('staffHistoryName');
-    if (sel) sel.value = '';
-    renderStaffHistory();
+    populateStaffHistoryDropdown('staffHistoryChipName', _staffHistoryChipState, renderStaffHistoryChips);
+    populateStaffHistoryDropdown('staffHistoryDetailName', _staffHistoryDetailState, renderStaffHistoryDetail);
+    _staffHistoryChipState.name = '';
+    _staffHistoryDetailState.name = '';
+    const selC = document.getElementById('staffHistoryChipName');
+    const selD = document.getElementById('staffHistoryDetailName');
+    if (selC) selC.value = '';
+    if (selD) selD.value = '';
+    renderStaffHistoryChips();
+    renderStaffHistoryDetail();
   } catch (e) {}
 
   // 新規予約タブの空き判定結果を新しい店舗のロジックで再計算
