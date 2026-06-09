@@ -624,6 +624,20 @@ button.secondary:active { background: var(--primary); color: white; }
 .status.tentative { background: var(--warning-bg); color: var(--warning); }
 .status.cancelled { background: #f0f0f0; color: var(--muted); }
 
+/* 時刻プルダウン */
+select.time-select {
+  width: 100%;
+  font-size: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--border);
+  background: white;
+  color: var(--text);
+  font-family: inherit;
+  font-weight: 600;
+}
+select.time-select option:disabled { color: #aaa; }
+
 /* インラインカレンダーグリッド（タップで即選択） */
 .cal-grid-wrap { margin-top: 8px; }
 .cal-header {
@@ -783,6 +797,20 @@ button.secondary:active { background: var(--primary); color: white; }
 <!-- Step 2: 詳細入力（最初は非表示） -->
 <div class="card hidden" id="step2">
   <h2>② 予約詳細を入力</h2>
+
+  <!-- 人数変更ステッパー（step2でも編集可能） -->
+  <div class="field" style="background:var(--primary-light);padding:8px 10px;border-radius:8px;margin-bottom:12px">
+    <label style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+      <span>人数：<strong id="step2PeopleLabel" style="font-size:18px">2名</strong></span>
+      <span style="font-size:11px;color:var(--muted)">⚠変更すると席候補が変わります</span>
+    </label>
+    <div class="stepper">
+      <button type="button" onclick="changeStep2People(-1)" aria-label="マイナス">−</button>
+      <input type="number" id="step2People" value="2" min="1" max="80" inputmode="numeric" onchange="changeStep2People(0)" />
+      <button type="button" onclick="changeStep2People(1)" aria-label="プラス">＋</button>
+    </div>
+    <button type="button" class="secondary" onclick="reCheckAvailabilityFromStep2()" style="margin-top:6px;padding:6px;font-size:12px;width:auto">← 空き確認に戻る（人数・時刻を変える）</button>
+  </div>
 
   <div class="field">
     <label>お電話番号<span class="req">*</span></label>
@@ -1964,11 +1992,14 @@ function refreshAvailabilityForStoreChange() {
     // 時刻が選択済みなら slotDetails も再表示
     if (state.time) {
       setTimeout(function() {
-        const btn = document.querySelector('#slotGrid .time-btn[data-time="' + state.time + '"]');
-        if (btn && !btn.classList.contains('full')) {
-          btn.classList.add('selected');
-          if (typeof showSlotDetails === 'function') {
-            try { showSlotDetails(dateInp.value, state.time, parseInt(peopleInp.value) || 2); } catch (e) {}
+        const sel = document.getElementById('slotGrid');
+        if (sel && sel.tagName === 'SELECT') {
+          sel.value = state.time;
+          const opt = sel.querySelector('option[value="' + state.time + '"]');
+          if (opt && !opt.disabled) {
+            if (typeof showSlotDetails === 'function') {
+              try { showSlotDetails(dateInp.value, state.time, parseInt(peopleInp.value) || 2); } catch (e) {}
+            }
           }
         }
         // 抑制フラグ解除
@@ -2328,10 +2359,18 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 // 時刻スロット定義
-const TIME_SLOTS = [
-  '17:00','17:30','18:00','18:30','19:00','19:30',
-  '20:00','20:30','21:00','21:30','22:00'
-];
+// 15分刻み（17:00〜22:00、21スロット）
+const TIME_SLOTS = (function() {
+  const arr = [];
+  for (let h = 17; h <= 22; h++) {
+    for (let m of [0, 15, 30, 45]) {
+      // 22:00 までは含める、22:15以降は除外
+      if (h === 22 && m > 0) break;
+      arr.push(String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0'));
+    }
+  }
+  return arr;
+})();
 
 function switchTab(name) {
   document.querySelectorAll('.bottom-nav button').forEach((b, i) => {
@@ -2419,28 +2458,28 @@ function checkAvailability() {
     + '当日予約合計 ' + dayTotal + '名 → 受付後 ' + newTotal + '名（使用率 ' + usagePercent + '%）'
     + '</div>'
     + '<div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text);">'
-    + '時刻ごとの空き状況（タップして選択）'
+    + '時刻を選択（15分刻み）'
     + '</div>'
-    + '<div class="time-grid" id="slotGrid" style="margin-top:8px"></div>'
+    + '<select id="slotGrid" class="time-select" style="width:100%;margin-top:8px"></select>'
     + '<div id="slotResult" style="margin-top:14px"></div>';
 
-  const grid = document.getElementById('slotGrid');
+  const sel = document.getElementById('slotGrid');
+  // 「未選択」エントリ＋全時刻オプション
+  let html = '<option value="">▼ 時刻を選んでください</option>';
   TIME_SLOTS.forEach(function(t) {
     const slot = computeSlotAvailability(date, t, people, dayRes);
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'time-btn ' + slot.cls;
-    btn.setAttribute('data-time', t);
-    btn.innerHTML = '<span>' + t + '</span><span class="slot-status">' + slot.label + '</span>';
-    if (slot.cls !== 'full') {
-      btn.addEventListener('click', function() {
-        document.querySelectorAll('#slotGrid .time-btn').forEach(b => b.classList.remove('selected'));
-        btn.classList.add('selected');
-        state.time = t;
-        showSlotDetails(date, t, people);
-      });
-    }
-    grid.appendChild(btn);
+    const label = t + ' ' + slot.label;
+    const disabled = slot.cls === 'full' ? ' disabled' : '';
+    html += '<option value="' + t + '" data-cls="' + slot.cls + '"' + disabled + '>' + label + '</option>';
+  });
+  sel.innerHTML = html;
+  sel.addEventListener('change', function() {
+    const t = sel.value;
+    if (!t) return;
+    state.time = t;
+    // dataset 上のクラスを擬似的に持たせる（旧コードの互換）
+    sel.setAttribute('data-time', t);
+    showSlotDetails(date, t, people);
   });
 }
 
@@ -2564,9 +2603,45 @@ function proceedToStep2() {
   document.getElementById('step3').classList.add('hidden');
   state.step = 2;
   renderCourseGrid();
-  // 手書きキャンバスを初期化（タイミング遅らせて表示後に）
-  setTimeout(function() { setupHandwriting('memoCanvas'); }, 100);
+  // step2 の人数フィールドを同期
+  syncStep2People();
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// step2 の人数表示と入力を state.people に同期
+function syncStep2People() {
+  const inp = document.getElementById('step2People');
+  const label = document.getElementById('step2PeopleLabel');
+  if (inp) inp.value = state.people;
+  if (label) label.textContent = state.people + '名';
+}
+
+// step2 で人数を変更
+function changeStep2People(delta) {
+  const inp = document.getElementById('step2People');
+  if (!inp) return;
+  let v = parseInt(inp.value) || 1;
+  v = Math.max(1, Math.min(80, v + delta));
+  inp.value = v;
+  state.people = v;
+  document.getElementById('step2PeopleLabel').textContent = v + '名';
+  // step1 側の人数も同期しておく
+  const step1Inp = document.getElementById('resPeople');
+  if (step1Inp) step1Inp.value = v;
+  // コースグリッドも再描画（必要人数で disabled が変わる）
+  if (typeof renderCourseGrid === 'function') renderCourseGrid();
+}
+
+// step2 から空き確認に戻る（人数が変わっていれば step1 で再判定）
+function reCheckAvailabilityFromStep2() {
+  backToStep1();
+  // 人数同期しておく
+  const inp = document.getElementById('resPeople');
+  if (inp && inp.value != state.people) inp.value = state.people;
+  // 既に判定済みなら再実行
+  if (state.availabilityChecked && typeof checkAvailability === 'function') {
+    try { checkAvailability(); } catch (e) {}
+  }
 }
 
 function backToStep1() {
@@ -4608,9 +4683,10 @@ function autoAdvanceFromSeatMap() {
     // ② 既存時刻があれば自動選択
     setTimeout(function() {
       if (state.time) {
-        const btn = document.querySelector('#slotGrid .time-btn[data-time="' + state.time + '"]');
-        if (btn) {
-          btn.click();
+        const sel = document.getElementById('slotGrid');
+        if (sel && sel.tagName === 'SELECT') {
+          sel.value = state.time;
+          try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
         }
       }
       // ③ 人数欄にフォーカス
