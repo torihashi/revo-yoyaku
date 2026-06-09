@@ -4699,18 +4699,38 @@ function _renderSeatMapImpl() {
     el.querySelectorAll('.occ').forEach(function(o) { o.remove(); });
     el.innerHTML = getSeatDisplayLabel(seatId);
 
-    if (busyMap[seatId]) {
+    // セルが「R1+R2」のような結合席の場合、構成卓トークンも調べる
+    const cellTokens = (typeof expandSeat === 'function') ? expandSeat(seatId) : [seatId];
+    // 直接一致 or 構成卓のどれかが使用中／予約あり、を判定
+    let busyRes = busyMap[seatId];
+    if (!busyRes) {
+      for (let i = 0; i < cellTokens.length; i++) {
+        if (busyMap[cellTokens[i]]) { busyRes = busyMap[cellTokens[i]]; break; }
+      }
+    }
+    let cellHasBooking = hasBooking[seatId];
+    if (!cellHasBooking) {
+      cellHasBooking = cellTokens.some(function(t) { return hasBooking[t]; });
+    }
+    let cellResCount = seatReservationCount[seatId] || 0;
+    cellTokens.forEach(function(t) {
+      if (t !== seatId && seatReservationCount[t]) {
+        cellResCount = Math.max(cellResCount, seatReservationCount[t]);
+      }
+    });
+
+    if (busyRes) {
       el.classList.add('busy');
-      const r = busyMap[seatId];
+      const r = busyRes;
       const occ = document.createElement('div');
       occ.className = 'occ';
       occ.textContent = r.name + (r.people ? '/' + r.people : '');
       el.appendChild(occ);
-    } else if (hasBooking[seatId]) {
+    } else if (cellHasBooking) {
       el.classList.add('has-booking');
     }
     // 同日に複数の予約が入っている席 → 黒太点線
-    if ((seatReservationCount[seatId] || 0) >= 2) {
+    if (cellResCount >= 2) {
       el.classList.add('multi-time');
     }
     // クリックハンドラ
