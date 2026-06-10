@@ -95,6 +95,22 @@ main { padding: 16px; max-width: 540px; margin: 0 auto; }
   display: block; font-size: 13px; font-weight: 600;
   color: var(--text); margin-bottom: 6px;
 }
+/* スクロール時に表示日を固定 */
+.field.sticky-date {
+  position: sticky;
+  top: 56px;
+  background: var(--card);
+  z-index: 45;
+  padding: 8px 0 10px;
+  margin: -8px 0 14px;
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 4px 6px -4px rgba(0,0,0,0.08);
+}
+.field.sticky-date label {
+  font-size: 12px;
+  margin-bottom: 4px;
+  color: var(--primary-dark);
+}
 .field label .req { color: var(--error); margin-left: 3px; }
 .field input, .field select, .field textarea {
   width: 100%; padding: 12px 14px;
@@ -1153,11 +1169,11 @@ select.time-select option:disabled { color: #aaa; }
 <section id="tab-list" class="hidden">
   <div class="card">
     <h2>📋 本日の予約一覧</h2>
-    <div class="field">
+    <div class="field sticky-date">
       <label>表示日</label>
       <input type="date" id="listDate" onchange="onListDateChange()" />
-      <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
     </div>
+    <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
       <button id="refreshBtn" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
       <div id="lastSyncTime" class="last-sync-time">最終同期：未同期</div>
@@ -1182,11 +1198,11 @@ select.time-select option:disabled { color: #aaa; }
 <section id="tab-seatmap">
   <div class="card">
     <h2>🪑 座席表（タップで新規予約・移動）</h2>
-    <div class="field">
+    <div class="field sticky-date">
       <label>日付<span class="req">*</span></label>
       <input type="date" id="smDate" />
-      <div class="cal-grid-wrap" data-target="smDate" data-onchange="onSmDateChange"></div>
     </div>
+    <div class="cal-grid-wrap" data-target="smDate" data-onchange="onSmDateChange"></div>
     <div class="field">
       <label>時間帯</label>
       <select id="smTime" style="width:100%"></select>
