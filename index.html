@@ -855,7 +855,26 @@ select.time-select option:disabled { color: #aaa; }
 .cal-nav:active { transform: scale(0.95); }
 .cal-grid {
   display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px;
+  will-change: transform, opacity, filter;
 }
+/* スライドアニメーション（残像感のある滑らかな移動） */
+@keyframes cal-slide-from-right {
+  0%   { transform: translateX(35%); opacity: 0; filter: blur(3px); }
+  50%  { opacity: 0.7; filter: blur(1.5px); }
+  100% { transform: translateX(0);   opacity: 1; filter: blur(0); }
+}
+@keyframes cal-slide-from-left {
+  0%   { transform: translateX(-35%); opacity: 0; filter: blur(3px); }
+  50%  { opacity: 0.7; filter: blur(1.5px); }
+  100% { transform: translateX(0);    opacity: 1; filter: blur(0); }
+}
+.cal-grid.anim-from-right { animation: cal-slide-from-right 0.32s cubic-bezier(0.22,1,0.36,1); }
+.cal-grid.anim-from-left  { animation: cal-slide-from-left  0.32s cubic-bezier(0.22,1,0.36,1); }
+/* タイトルも併せて軽く動く */
+@keyframes cal-title-shift-r { 0% { opacity: 0.4; transform: translateX(10%); } 100% { opacity: 1; transform: translateX(0); } }
+@keyframes cal-title-shift-l { 0% { opacity: 0.4; transform: translateX(-10%); } 100% { opacity: 1; transform: translateX(0); } }
+.cal-title.anim-from-right { animation: cal-title-shift-r 0.32s cubic-bezier(0.22,1,0.36,1); }
+.cal-title.anim-from-left  { animation: cal-title-shift-l 0.32s cubic-bezier(0.22,1,0.36,1); }
 .cal-dow {
   text-align: center; font-weight: 700; padding: 4px 0;
   font-size: 11px; color: var(--muted);
@@ -5439,7 +5458,7 @@ function handleSeatClick(seatId) {
 }
 
 // インラインカレンダーグリッド：タップで即日付選択
-function renderCalendarGrid(container) {
+function renderCalendarGrid(container, animDirection) {
   if (!container) return;
   const targetId = container.getAttribute('data-target');
   const onchangeName = container.getAttribute('data-onchange');
@@ -5498,6 +5517,21 @@ function renderCalendarGrid(container) {
 
   container.innerHTML = html;
 
+  // スライドアニメーション適用（指定があれば）
+  if (animDirection) {
+    const gridEl = container.querySelector('.cal-grid');
+    const titleEl = container.querySelector('.cal-title');
+    const cls = animDirection === 'next' ? 'anim-from-right' : 'anim-from-left';
+    if (gridEl) {
+      gridEl.classList.add(cls);
+      setTimeout(function() { gridEl.classList.remove(cls); }, 350);
+    }
+    if (titleEl) {
+      titleEl.classList.add(cls);
+      setTimeout(function() { titleEl.classList.remove(cls); }, 350);
+    }
+  }
+
   // ナビゲーション（前月/翌月）
   container.querySelectorAll('.cal-nav').forEach(function(btn) {
     btn.addEventListener('click', function() {
@@ -5505,7 +5539,7 @@ function renderCalendarGrid(container) {
       state.month += delta;
       if (state.month < 0)  { state.month = 11; state.year--; }
       if (state.month > 11) { state.month = 0;  state.year++; }
-      renderCalendarGrid(container);
+      renderCalendarGrid(container, delta > 0 ? 'next' : 'prev');
     });
   });
 
@@ -5543,16 +5577,19 @@ function renderCalendarGrid(container) {
       const dy = touch.clientY - touchStartY;
       // 横方向の動き > 縦方向 & 50px以上スワイプ
       if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+        let dir;
         if (dx < 0) {
           // 左スワイプ → 翌月
           state.month++;
           if (state.month > 11) { state.month = 0; state.year++; }
+          dir = 'next';
         } else {
           // 右スワイプ → 前月
           state.month--;
           if (state.month < 0) { state.month = 11; state.year--; }
+          dir = 'prev';
         }
-        renderCalendarGrid(container);
+        renderCalendarGrid(container, dir);
       }
     }, { passive: true });
   }
