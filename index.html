@@ -2895,6 +2895,17 @@ function rerenderSeatPref() {
   sel.innerHTML = options.map(function(o) {
     return '<option value="' + o.value + '">' + o.label + '</option>';
   }).join('');
+  // 「席のご希望」を変更したらプリセット席を解除（容量チェックがプリセットで詰まらないように）
+  if (!sel._changeBound) {
+    sel._changeBound = true;
+    sel.addEventListener('change', function() {
+      // 自動以外の選択 → プリセット解除
+      if (sel.value && sel.value !== '自動') {
+        state.preselectedSeat = null;
+        if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+      }
+    });
+  }
 }
 
 let reservations = [];
@@ -3658,20 +3669,23 @@ function confirmReservation() {
   }
 
   // 席の決定
-  // 優先順位: ① 座席表からのプリセット ② 席のご希望ドロップダウン ③ 未設定
+  // 優先順位: 「席のご希望」が明示的（自動以外）→ プリセットより優先
+  //          ① ドロップダウン（自動以外）② 座席表プリセット ③ 未設定
   let seat;
-  if (state.preselectedSeat) {
+  if (seatPref && seatPref !== '自動') {
+    // ドロップダウン優先 → プリセットも解除
+    seat = seatPref;
+    state.preselectedSeat = null;
+    if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+  } else if (state.preselectedSeat) {
     seat = state.preselectedSeat;
-    // プリセット席の容量チェック
     const cap = getSeatCapacity(seat);
     if (cap < state.people) {
-      alert('選択された席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。\n座席表に戻って別の席を選ぶか、画面上部の「解除」ボタンでおまかせに戻してください。');
+      alert('選択された席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。\n「席のご希望」プルダウンで別の席を選ぶか、画面上部の「解除」ボタンでおまかせに戻してください。');
       return;
     }
-  } else if (seatPref === '自動' || !seatPref) {
-    seat = '未設定';
   } else {
-    seat = seatPref;
+    seat = '未設定';
   }
 
   const data = {
