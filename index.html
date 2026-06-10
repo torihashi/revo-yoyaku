@@ -2201,7 +2201,7 @@ function openStaffShiftModal() {
 
     // 楽観的UI：① モーダル即閉じ ② キャッシュへ即追加 ③ レール即再描画 ④ 裏でGAS同期
     const optimisticItem = {
-      id: 'tmp-' + Date.now(),
+      id: 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       name: title,
       start: startDate.toISOString(),
       end: endDate.toISOString()
@@ -2221,9 +2221,11 @@ function openStaffShiftModal() {
       if (resp.ok) {
         updateSyncStatus(currentType === 'unav' ? '✓ 不可登録OK' : '✓ シフト追加OK', '#2e7d32');
         setTimeout(function() { updateSyncStatus(''); }, 2500);
-        // キャッシュをクリアして再フェッチ（IDが本物に置き換わる）
-        delete _staffSchedCache[_staffKey(date, currentStore)];
-        try { renderStaffRail(); } catch (e) {}
+        // 重要：キャッシュは消さず、楽観追加のIDだけ本物のeventIdに置き換える
+        // → 連続追加時のレース防止（複数の fetch が楽観追加分を消すのを防ぐ）
+        if (resp.eventId) {
+          optimisticItem.id = resp.eventId;
+        }
       } else {
         // 失敗時はキャッシュから楽観追加分を取り除く
         const key = _staffKey(date, currentStore);
@@ -2272,9 +2274,23 @@ function fetchStaffSchedule(date, store, callback) {
     + '&date=' + encodeURIComponent(date);
   _staffSchedInflight[key] = fetch(url).then(function(r) { return r.json(); })
     .then(function(data) {
-      const items = (data && data.ok && Array.isArray(data.items)) ? data.items : [];
-      _staffSchedCache[key] = { items: items, ts: Date.now() };
-      return items;
+      const serverItems = (data && data.ok && Array.isArray(data.items)) ? data.items : [];
+      // 既存のキャッシュから「楽観追加で未確定（tmp- ID）」のアイテムを抽出
+      const prev = (_staffSchedCache[key] && _staffSchedCache[key].items) || [];
+      const stillPending = prev.filter(function(it) {
+        // tmp- IDなら未確定（GAS応答が来てないかも）
+        if (!it.id || (it.id + '').indexOf('tmp-') === 0) {
+          // サーバーにも同名+同開始のものが既にあれば重複なので除外
+          return !serverItems.some(function(s) {
+            return s.name === it.name && s.start === it.start;
+          });
+        }
+        return false;
+      });
+      // サーバーアイテム + まだ未確定の楽観追加 をマージ
+      const merged = serverItems.concat(stillPending);
+      _staffSchedCache[key] = { items: merged, ts: Date.now() };
+      return merged;
     })
     .catch(function() { return cached ? cached.items : []; })
     .finally(function() { delete _staffSchedInflight[key]; });
@@ -2638,9 +2654,17 @@ function pullFromCalendar() {
     btn.innerHTML = '<span class="spinner">🔄</span> 取得中...';
   });
   updateSyncStatus('カレンダーから取得中...', '#ef6c00');
+  // スタッフシフトのキャッシュも強制クリア → 次の renderStaffRail で再フェッチ
+  try {
+    const _today = smState.date || todayStr();
+    delete _staffSchedCache[_staffKey(_today, 'torihashi')];
+    delete _staffSchedCache[_staffKey(_today, 'revolverd')];
+  } catch (e) {}
   syncFromWebhook(function(ok, result) {
     const lastSyncEls = _getLastSyncEls();
     if (ok) {
+      // シフトレールも更新
+      try { renderStaffRail(); } catch (e) {}
       const msg = '✓ 取得 ' + result.total + '件 / 更新 ' + result.updated
                 + ' / 新規 ' + result.added + ' / 取消 ' + result.cancelled
                 + ' / 復元 ' + (result.restored || 0);
