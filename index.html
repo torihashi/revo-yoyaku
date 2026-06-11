@@ -2533,6 +2533,52 @@ function inferCourseFromTitle(title, store) {
   }
 }
 
+// お土産予約の説明文から商品内訳・合計・点数等を復元
+function parseTakeoutDescription(desc) {
+  const out = { entries: [], total: 0, count: 0, phone: '', notes: '', summary: '' };
+  if (!desc) return out;
+  const lines = String(desc).split('\n');
+  let inEntries = false;
+  const entryLines = [];
+  lines.forEach(function(raw) {
+    const line = raw.trim();
+    if (line.indexOf('電話:') === 0 || line.indexOf('電話：') === 0) {
+      out.phone = line.replace(/^電話[:：]\s*/, '');
+    } else if (line.indexOf('点数:') === 0 || line.indexOf('点数：') === 0) {
+      const m = line.match(/(\d+)/); if (m) out.count = parseInt(m[1]);
+    } else if (line.indexOf('合計:') === 0 || line.indexOf('合計：') === 0) {
+      const m = line.replace(/,/g, '').match(/(\d+)/); if (m) out.total = parseInt(m[1]);
+    } else if (line.indexOf('備考:') === 0 || line.indexOf('備考：') === 0) {
+      const v = line.replace(/^備考[:：]\s*/, '');
+      out.notes = (v === 'なし') ? '' : v;
+    } else if (line.indexOf('【商品内訳】') === 0) {
+      inEntries = true;
+    } else if (inEntries && line.indexOf('-') === 0) {
+      entryLines.push(line.substring(1).trim());
+    }
+  });
+  // 各行をパース：「商品A（オプション）【メモ】 ×2 = 2,000円」
+  entryLines.forEach(function(l) {
+    const m = l.match(/^(.+?)\s*[×x]\s*(\d+)\s*=\s*([\d,]+)円$/);
+    if (!m) return;
+    let body = m[1].trim();
+    const qty = parseInt(m[2]);
+    const lineTotal = parseInt(m[3].replace(/,/g, ''));
+    const price = qty > 0 ? Math.round(lineTotal / qty) : lineTotal;
+    let memo = '';
+    const memoMatch = body.match(/【(.+?)】/);
+    if (memoMatch) { memo = memoMatch[1]; body = body.replace(/【.+?】/, '').trim(); }
+    let option = '';
+    const optMatch = body.match(/（(.+?)）\s*$/);
+    if (optMatch) { option = optMatch[1]; body = body.replace(/（.+?）\s*$/, '').trim(); }
+    out.entries.push({ name: body, qty: qty, price: price, option: option, memo: memo });
+  });
+  out.summary = out.entries.map(function(e) {
+    return e.name + (e.option ? '（' + e.option + '）' : '') + (e.memo ? '【' + e.memo + '】' : '') + ' ×' + e.qty;
+  }).join('、');
+  return out;
+}
+
 function mergeFromCalendar(items) {
   let updated = 0, added = 0, cancelled = 0, restored = 0;
   items.forEach(function(ev) {
@@ -2593,6 +2639,19 @@ function mergeFromCalendar(items) {
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
       if (existing.time !== evTime)  { existing.time = evTime; changed = true; }
+      // お土産の場合、商品内訳が空ならGCal側説明文から復元
+      if (existing.type === 'takeout' && (!existing.entries || existing.entries.length === 0)) {
+        const tk = parseTakeoutDescription(ev.description || '');
+        if (tk.entries.length > 0) {
+          existing.entries = tk.entries;
+          existing.total = tk.total;
+          existing.count = tk.count;
+          existing.summary = tk.summary;
+          if (!existing.phone) existing.phone = tk.phone;
+          if (!existing.notes) existing.notes = tk.notes;
+          changed = true;
+        }
+      }
       if (changed) updated++;
     } else if (!titleCancelled) {
       // 新規取り込み（Yahoo!/AutoReserve由来などPWA未登録のもの）
@@ -2621,9 +2680,13 @@ function mergeFromCalendar(items) {
         createdAt: new Date(ev.start).getTime()
       };
       if (isTakeout) {
-        newRes.summary = (ev.description || '').split('\n').slice(0, 2).join(' / ');
-        newRes.total = 0;
-        newRes.count = 0;
+        const tk = parseTakeoutDescription(ev.description || '');
+        newRes.entries = tk.entries;
+        newRes.total   = tk.total;
+        newRes.count   = tk.count;
+        newRes.summary = tk.summary || (ev.description || '').split('\n').slice(0, 2).join(' / ');
+        newRes.phone   = tk.phone || newRes.phone;
+        if (tk.notes) newRes.notes = tk.notes;
       }
       reservations.push(newRes);
       added++;
@@ -4462,6 +4525,11 @@ function openTakeoutEditModal(resId) {
       const startDate = new Date(r.date + 'T' + r.time + ':00');
       const endDate   = new Date(startDate.getTime() + 15 * 60 * 1000);
       const newTitle = '🥡 ' + r.name + '様（お土産・' + r.count + '点・' + r.total.toLocaleString() + '円）';
+      const itemLines = (r.entries || []).map(function(e) {
+        return '- ' + e.name + (e.option ? '（' + e.option + '）' : '')
+          + (e.memo ? ' 【' + e.memo + '】' : '')
+          + ' ×' + e.qty + ' = ' + (e.price * e.qty).toLocaleString() + '円';
+      });
       const newDesc  = [
         '予約ID: ' + r.id,
         '受取日時: ' + r.date + ' ' + r.time,
@@ -4470,7 +4538,10 @@ function openTakeoutEditModal(resId) {
         '点数: ' + r.count + '点',
         '合計: ' + r.total.toLocaleString() + '円',
         '受付: PWA直接（お土産）',
-        '備考: ' + (r.notes || 'なし')
+        '備考: ' + (r.notes || 'なし'),
+        '',
+        '【商品内訳】',
+        itemLines.join('\n')
       ].join('\n');
       callWebhook({
         action: 'update',
@@ -4924,6 +4995,7 @@ function confirmTakeout() {
     handwriting: getHandwritingDataURL('takeoutMemoCanvas'),
     status: 'confirmed',
     source: 'pwa',
+    store: currentStore,
     createdAt: Date.now()
   };
 
@@ -5307,9 +5379,14 @@ function renderTakeoutRail(date) {
   // 既存のラベル以外を削除
   rail.querySelectorAll('.to-slot').forEach(function(s) { s.remove(); });
 
-  // 当日のお土産予約（キャンセル除外）
+  // 当日のお土産予約（キャンセル除外・店舗別）
   const takeouts = reservations
-    .filter(function(r) { return r.date === date && r.type === 'takeout' && r.status !== 'cancelled'; })
+    .filter(function(r) {
+      return r.date === date
+          && r.type === 'takeout'
+          && r.status !== 'cancelled'
+          && (r.store || 'torihashi') === currentStore;
+    })
     .sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
 
   const maxSlots = Math.max(10, takeouts.length);
