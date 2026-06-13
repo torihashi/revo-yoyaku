@@ -963,6 +963,83 @@ select.time-select option:disabled { color: #aaa; }
 .bottom-nav button.active { color: var(--primary); }
 .bottom-nav button .icon { font-size: 22px; }
 
+/* ========================================
+   認証ゲート（ログイン画面）
+======================================== */
+#authGate {
+  position: fixed; inset: 0;
+  background: linear-gradient(135deg, #fff8e1 0%, #ffecb3 100%);
+  z-index: 9000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  overflow: auto;
+}
+.auth-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px 24px;
+  width: 100%; max-width: 380px;
+  box-shadow: 0 8px 28px rgba(0,0,0,0.15);
+  border: 1.5px solid var(--border);
+}
+.auth-card h1 {
+  margin: 0 0 6px;
+  font-size: 20px; color: var(--primary-dark);
+  text-align: center;
+}
+.auth-card .sub {
+  margin: 0 0 18px;
+  font-size: 12px; color: var(--muted);
+  text-align: center;
+}
+.auth-card label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: var(--text); margin-bottom: 6px;
+}
+.auth-card input[type="email"] {
+  width: 100%; padding: 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  font-size: 16px; font-family: inherit;
+  background: #fff;
+}
+.auth-card input[type="email"]:focus {
+  outline: none; border-color: var(--primary);
+}
+.auth-card button {
+  width: 100%; padding: 14px;
+  background: var(--primary); color: #fff;
+  border: none; border-radius: 10px;
+  font-size: 16px; font-weight: 700;
+  margin-top: 12px; cursor: pointer;
+  font-family: inherit;
+}
+.auth-card button:active { background: var(--primary-dark); }
+.auth-card button:disabled { opacity: 0.5; cursor: wait; }
+.auth-error {
+  margin-top: 12px; padding: 10px;
+  border-radius: 8px;
+  background: #ffebee; color: #c62828;
+  font-size: 13px; border-left: 3px solid #c62828;
+  display: none;
+}
+.auth-error.show { display: block; }
+.auth-foot {
+  margin-top: 18px; padding-top: 14px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px; color: var(--muted);
+  text-align: center; line-height: 1.6;
+}
+/* ヘッダーのユーザー表示 */
+.user-chip {
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,.25);
+  padding: 4px 10px; border-radius: 12px;
+  font-size: 11px; font-weight: 600;
+  cursor: pointer; touch-action: manipulation;
+}
+.user-chip:active { background: rgba(255,255,255,.4); }
+
 /* 店舗切替ナビ（最上部） */
 .store-nav {
   display: flex;
@@ -1000,6 +1077,22 @@ select.time-select option:disabled { color: #aaa; }
 </head>
 <body data-store="torihashi">
 
+<!-- 認証ゲート（初回起動時にのみ表示） -->
+<div id="authGate" style="display:none;">
+  <div class="auth-card">
+    <h1>🐔 鳥はし／🥃 リボルバード</h1>
+    <p class="sub">予約管理アプリへようこそ</p>
+    <label for="authEmail">登録メールアドレス</label>
+    <input type="email" id="authEmail" placeholder="例：yamada@gmail.com" autocomplete="email" inputmode="email" enterkeyhint="go" />
+    <button id="authLoginBtn" type="button">ログイン</button>
+    <div id="authError" class="auth-error"></div>
+    <div class="auth-foot">
+      ※ 利用には事前に店長へのメールアドレス登録が必要です<br>
+      登録済みでもログインできない場合は店長へお問い合わせください
+    </div>
+  </div>
+</div>
+
 <!-- 店舗切替ナビ -->
 <nav class="store-nav">
   <button class="active" data-store="torihashi" onclick="setCurrentStore('torihashi')">🐔 鳥はし</button>
@@ -1008,7 +1101,10 @@ select.time-select option:disabled { color: #aaa; }
 
 <header>
   <h1 id="storeTitle">🐔 鳥はし 予約受付</h1>
-  <div class="badge" id="todayLabel">今日</div>
+  <div style="display:flex;gap:6px;align-items:center;">
+    <div class="user-chip" id="userChip" onclick="onUserChipTap()" style="display:none;">👤 <span id="userChipName">—</span></div>
+    <div class="badge" id="todayLabel">今日</div>
+  </div>
 </header>
 
 <main>
@@ -1659,6 +1755,189 @@ function callWebhook(payload) {
   .catch(function(err) { return { ok: false, error: String(err) }; });
 }
 
+// ============================================================
+// 認証システム（メールアドレスベース）
+// ============================================================
+const AUTH_KEY = 'pwa_auth_v1';
+let currentUser = null;
+
+function getSavedAuth() {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.email || !obj.name) return null;
+    return obj;
+  } catch (e) { return null; }
+}
+
+function saveAuth(user) {
+  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+}
+
+function clearAuth() {
+  localStorage.removeItem(AUTH_KEY);
+  currentUser = null;
+}
+
+function showAuthGate() {
+  const gate = document.getElementById('authGate');
+  if (gate) {
+    gate.style.display = 'flex';
+    setTimeout(function() {
+      const inp = document.getElementById('authEmail');
+      if (inp) inp.focus();
+    }, 100);
+  }
+}
+
+function hideAuthGate() {
+  const gate = document.getElementById('authGate');
+  if (gate) gate.style.display = 'none';
+}
+
+function updateUserChip() {
+  const chip = document.getElementById('userChip');
+  const nameEl = document.getElementById('userChipName');
+  if (currentUser && chip && nameEl) {
+    nameEl.textContent = currentUser.name + (currentUser.isAdmin ? '👑' : '');
+    chip.style.display = 'flex';
+  } else if (chip) {
+    chip.style.display = 'none';
+  }
+}
+
+function onUserChipTap() {
+  if (!currentUser) return;
+  const msg = 'ログイン中：' + currentUser.name + '\n'
+            + 'メール：' + currentUser.email + '\n'
+            + '権限：' + (currentUser.isAdmin ? '管理者 👑' : 'スタッフ') + '\n\n'
+            + 'ログアウトしますか？';
+  if (confirm(msg)) {
+    clearAuth();
+    location.reload();
+  }
+}
+
+function showAuthError(msg) {
+  const el = document.getElementById('authError');
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+function clearAuthError() {
+  const el = document.getElementById('authError');
+  if (!el) return;
+  el.textContent = '';
+  el.classList.remove('show');
+}
+
+function attemptLogin(email) {
+  if (!isWebhookConfigured()) {
+    showAuthError('Webhookが設定されていません。管理者へお問い合わせください。');
+    return Promise.resolve(false);
+  }
+  const url = WEBHOOK_URL
+    + '?action=authorize'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&email='  + encodeURIComponent(email);
+  return fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      if (resp && resp.ok) {
+        currentUser = {
+          email: email,
+          name: resp.name,
+          group: resp.group,
+          isAdmin: !!resp.isAdmin,
+          defaultStore: resp.defaultStore || 'torihashi',
+          loggedInAt: Date.now()
+        };
+        saveAuth(currentUser);
+        return true;
+      }
+      const e = (resp && resp.error) || 'unknown';
+      const msg = e === 'notfound'      ? '⚠ このメールアドレスは登録されていません。\n店長にご相談ください。'
+                : e === 'disabled'      ? '⚠ アクセスが停止されています。\n店長にご相談ください。'
+                : e === 'email required'? '⚠ メールアドレスを入力してください。'
+                : e.indexOf('sheet') >= 0 ? '⚠ 従業員マスタが見つかりません（管理者向け：シート設定要確認）'
+                : '⚠ 認証エラー：' + e;
+      showAuthError(msg);
+      return false;
+    })
+    .catch(function(err) {
+      showAuthError('⚠ 通信エラー：' + String(err));
+      return false;
+    });
+}
+
+function doLogin() {
+  clearAuthError();
+  const inp = document.getElementById('authEmail');
+  const btn = document.getElementById('authLoginBtn');
+  const email = (inp.value || '').trim().toLowerCase();
+  if (!email) { showAuthError('メールアドレスを入力してください'); return; }
+  if (email.indexOf('@') < 0) { showAuthError('メールアドレスの形式が正しくありません'); return; }
+
+  btn.disabled = true;
+  btn.textContent = '確認中...';
+  attemptLogin(email).then(function(ok) {
+    btn.disabled = false;
+    btn.textContent = 'ログイン';
+    if (ok) {
+      hideAuthGate();
+      updateUserChip();
+      // 既に起動済の場合は再描画だけ
+      if (typeof renderReservationList === 'function') { try { renderReservationList(); } catch(e) {} }
+      if (typeof renderSeatMap === 'function')         { try { renderSeatMap(); } catch(e) {} }
+      // 管理者なら自店舗ではなく現状維持、一般スタッフは所属店舗に切替
+      if (currentUser && !currentUser.isAdmin && currentUser.defaultStore && currentUser.defaultStore !== currentStore) {
+        try { setCurrentStore(currentUser.defaultStore); } catch(e) {}
+      }
+    }
+  });
+}
+
+// バックグラウンドで再検証（停止された場合などを検知）
+function revalidateAuthSilently() {
+  if (!currentUser || !currentUser.email) return;
+  attemptLogin(currentUser.email).then(function(ok) {
+    if (!ok) {
+      clearAuth();
+      showAuthGate();
+    }
+  });
+}
+
+// 初回チェック：保存があれば即起動、なければゲート表示
+function checkAuthOnBoot() {
+  const saved = getSavedAuth();
+  if (saved) {
+    currentUser = saved;
+    hideAuthGate();
+    updateUserChip();
+    // 30分以上経っていれば裏で再検証
+    if (Date.now() - (saved.loggedInAt || 0) > 30 * 60 * 1000) {
+      setTimeout(revalidateAuthSilently, 5000);
+    }
+    return true;
+  }
+  showAuthGate();
+  return false;
+}
+
+// イベントバインド
+document.addEventListener('DOMContentLoaded', function() {
+  const btn = document.getElementById('authLoginBtn');
+  if (btn) btn.addEventListener('click', doLogin);
+  const inp = document.getElementById('authEmail');
+  if (inp) inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') doLogin();
+  });
+  checkAuthOnBoot();
+});
+
 // 従業員マスタのキャッシュ（メモリ + localStorage 二重）
 const EMPLOYEE_CACHE_KEY = 'torihashi_employee_cache_v1';
 const _employeeMemCache = {}; // メモリ：ページ表示中は即時アクセス
@@ -2013,9 +2292,15 @@ function renderLaborMonth() {
     });
 }
 
-// セッション継続中はロック解除状態を保持
+// セッション継続中はロック解除状態を保持。管理者は自動解錠。
 function initLaborSection() {
   try {
+    if (currentUser && currentUser.isAdmin) {
+      // 管理者は自動でロック解除
+      try { sessionStorage.setItem('laborUnlocked', '1'); } catch(e) {}
+      showLaborUnlocked();
+      return;
+    }
     if (sessionStorage.getItem('laborUnlocked') === '1') {
       showLaborUnlocked();
     }
@@ -2179,7 +2464,13 @@ function openStaffShiftModal() {
         const mark = unavSet[e.name] ? '❌ ' : '';
         return '<option value="' + e.name + '">' + mark + e.name + '</option>';
       }).join('');
-    if (currentValue) sel.value = currentValue;
+    if (currentValue) {
+      sel.value = currentValue;
+    } else if (currentUser && currentUser.name && !currentUser.isAdmin) {
+      // ログイン中のユーザー名を自動選択（管理者以外）
+      const match = employees.find(function(e) { return e.name === currentUser.name; });
+      if (match) sel.value = match.name;
+    }
   };
 
   // ① まず従業員マスタを描画（キャッシュ即時）
