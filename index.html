@@ -3822,10 +3822,13 @@ function confirmReservation() {
   };
   state.pending = data;
 
-  // 確認画面表示
+  // 確認画面表示（日時に曜日を追加）
+  const _wkJp = ['日','月','火','水','木','金','土'];
+  const _d = new Date(data.date + 'T00:00:00');
+  const _dow = isNaN(_d.getTime()) ? '' : '（' + _wkJp[_d.getDay()] + '）';
   const summary = document.getElementById('confirmSummary');
   summary.innerHTML = `
-    <div class="summary-row"><span class="label">日時</span><span class="value">${data.date} ${data.time}</span></div>
+    <div class="summary-row"><span class="label">日時</span><span class="value">${data.date}${_dow} ${data.time}</span></div>
     <div class="summary-row"><span class="label">人数</span><span class="value">${data.people}名（中学生以上${adultCount}・小学生${kidElementary}・幼児${kidInfant}）</span></div>
     <div class="summary-row"><span class="label">お名前</span><span class="value">${data.name}様</span></div>
     <div class="summary-row"><span class="label">お電話</span><span class="value">${data.phone}</span></div>
@@ -4999,9 +5002,13 @@ function confirmTakeout() {
     createdAt: Date.now()
   };
 
+  // 受取日時に曜日を追加
+  const _tkWkJp = ['日','月','火','水','木','金','土'];
+  const _tkD = new Date(takeoutState.date + 'T00:00:00');
+  const _tkDow = isNaN(_tkD.getTime()) ? '' : '（' + _tkWkJp[_tkD.getDay()] + '）';
   const summary = document.getElementById('takeoutConfirmSummary');
   summary.innerHTML =
-    '<div class="summary-row"><span class="label">受取日時</span><span class="value">' + takeoutState.date + ' ' + takeoutState.time + '</span></div>'
+    '<div class="summary-row"><span class="label">受取日時</span><span class="value">' + takeoutState.date + _tkDow + ' ' + takeoutState.time + '</span></div>'
     + '<div class="summary-row"><span class="label">お名前</span><span class="value">' + name + '様</span></div>'
     + '<div class="summary-row"><span class="label">お電話</span><span class="value">' + phone + '</span></div>'
     + '<div class="summary-row"><span class="label">商品</span><span class="value">' + lines.join('<br>') + '</span></div>'
