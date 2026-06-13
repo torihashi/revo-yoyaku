@@ -1083,12 +1083,14 @@ select.time-select option:disabled { color: #aaa; }
     <h1>🐔 鳥はし／🥃 リボルバード</h1>
     <p class="sub">予約管理アプリへようこそ</p>
     <label for="authEmail">登録メールアドレス</label>
-    <input type="email" id="authEmail" placeholder="例：yamada@gmail.com" autocomplete="email" inputmode="email" enterkeyhint="go" />
+    <input type="email" id="authEmail" placeholder="例：yamada@gmail.com" autocomplete="email" inputmode="email" enterkeyhint="next" />
+    <label for="authPin" style="margin-top:14px;">PIN（6桁の数字）</label>
+    <input type="tel" id="authPin" maxlength="6" pattern="[0-9]*" inputmode="numeric" autocomplete="off" placeholder="例：381502" enterkeyhint="go" style="letter-spacing:0.4em;text-align:center;font-size:20px;font-weight:700;" />
     <button id="authLoginBtn" type="button">ログイン</button>
     <div id="authError" class="auth-error"></div>
     <div class="auth-foot">
-      ※ 利用には事前に店長へのメールアドレス登録が必要です<br>
-      登録済みでもログインできない場合は店長へお問い合わせください
+      ※ 利用には事前に店長へのメールアドレス・PIN登録が必要です<br>
+      PINを忘れた場合は店長へお問い合わせください
     </div>
   </div>
 </div>
@@ -1833,7 +1835,7 @@ function clearAuthError() {
   el.classList.remove('show');
 }
 
-function attemptLogin(email) {
+function attemptLogin(email, pin) {
   if (!isWebhookConfigured()) {
     showAuthError('Webhookが設定されていません。管理者へお問い合わせください。');
     return Promise.resolve(false);
@@ -1841,13 +1843,15 @@ function attemptLogin(email) {
   const url = WEBHOOK_URL
     + '?action=authorize'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
-    + '&email='  + encodeURIComponent(email);
+    + '&email='  + encodeURIComponent(email)
+    + '&pin='    + encodeURIComponent(pin || '');
   return fetch(url)
     .then(function(r) { return r.json(); })
     .then(function(resp) {
       if (resp && resp.ok) {
         currentUser = {
           email: email,
+          pin: pin, // 再検証用に保存（端末内のみ・ネットには平文で都度送信）
           name: resp.name,
           group: resp.group,
           isAdmin: !!resp.isAdmin,
@@ -1860,6 +1864,9 @@ function attemptLogin(email) {
       const e = (resp && resp.error) || 'unknown';
       const msg = e === 'notfound'      ? '⚠ このメールアドレスは登録されていません。\n店長にご相談ください。'
                 : e === 'disabled'      ? '⚠ アクセスが停止されています。\n店長にご相談ください。'
+                : e === 'wrong pin'     ? '⚠ PINが違います。もう一度ご確認ください。'
+                : e === 'pin not set'   ? '⚠ このアカウントのPINが未設定です。\n店長にご相談ください。'
+                : e === 'pin required'  ? '⚠ PINを入力してください。'
                 : e === 'email required'? '⚠ メールアドレスを入力してください。'
                 : e.indexOf('sheet') >= 0 ? '⚠ 従業員マスタが見つかりません（管理者向け：シート設定要確認）'
                 : '⚠ 認証エラー：' + e;
@@ -1874,15 +1881,19 @@ function attemptLogin(email) {
 
 function doLogin() {
   clearAuthError();
-  const inp = document.getElementById('authEmail');
+  const inpE = document.getElementById('authEmail');
+  const inpP = document.getElementById('authPin');
   const btn = document.getElementById('authLoginBtn');
-  const email = (inp.value || '').trim().toLowerCase();
+  const email = (inpE.value || '').trim().toLowerCase();
+  const pin = (inpP.value || '').replace(/[^0-9]/g, '');
   if (!email) { showAuthError('メールアドレスを入力してください'); return; }
   if (email.indexOf('@') < 0) { showAuthError('メールアドレスの形式が正しくありません'); return; }
+  if (!pin)   { showAuthError('PIN（6桁の数字）を入力してください'); return; }
+  if (pin.length < 4) { showAuthError('PINは4〜6桁の数字で入力してください'); return; }
 
   btn.disabled = true;
   btn.textContent = '確認中...';
-  attemptLogin(email).then(function(ok) {
+  attemptLogin(email, pin).then(function(ok) {
     btn.disabled = false;
     btn.textContent = 'ログイン';
     if (ok) {
@@ -1901,8 +1912,8 @@ function doLogin() {
 
 // バックグラウンドで再検証（停止された場合などを検知）
 function revalidateAuthSilently() {
-  if (!currentUser || !currentUser.email) return;
-  attemptLogin(currentUser.email).then(function(ok) {
+  if (!currentUser || !currentUser.email || !currentUser.pin) return;
+  attemptLogin(currentUser.email, currentUser.pin).then(function(ok) {
     if (!ok) {
       clearAuth();
       showAuthGate();
@@ -1931,10 +1942,24 @@ function checkAuthOnBoot() {
 document.addEventListener('DOMContentLoaded', function() {
   const btn = document.getElementById('authLoginBtn');
   if (btn) btn.addEventListener('click', doLogin);
-  const inp = document.getElementById('authEmail');
-  if (inp) inp.addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') doLogin();
+  const inpE = document.getElementById('authEmail');
+  const inpP = document.getElementById('authPin');
+  if (inpE) inpE.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (inpP) inpP.focus();
+    }
   });
+  if (inpP) {
+    inpP.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') doLogin();
+    });
+    // 数字以外を自動除去
+    inpP.addEventListener('input', function() {
+      const v = inpP.value.replace(/[^0-9]/g, '');
+      if (v !== inpP.value) inpP.value = v;
+    });
+  }
   checkAuthOnBoot();
 });
 
