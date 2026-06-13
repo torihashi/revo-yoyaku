@@ -224,6 +224,29 @@ button.secondary:active { background: var(--primary); color: white; }
 .reservation-item .info { flex: 1; min-width: 0; }
 .reservation-item .time { font-weight: 700; color: var(--primary-dark); font-size: 15px; }
 .reservation-item .meta { font-size: 13px; color: var(--muted); margin-top: 2px; }
+/* コース（料理・飲み放題）を目立たせるバッジ */
+.reservation-item .course-badge {
+  display: inline-block;
+  margin: 6px 0 4px;
+  padding: 5px 12px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 10px;
+  letter-spacing: 0.3px;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  border: 1.5px solid var(--primary);
+}
+.reservation-item .course-badge.drink {
+  background: #fff3e0;
+  color: #e65100;
+  border-color: #f57c00;
+}
+.reservation-item .course-badge.premium {
+  background: #fce4ec;
+  color: #ad1457;
+  border-color: #d81b60;
+}
 .reservation-item .status {
   font-size: 11px; padding: 3px 8px; border-radius: 8px;
   font-weight: 600; white-space: nowrap;
@@ -5172,6 +5195,17 @@ function renderReservationList() {
       const seatHtml = pending
         ? '<span style="color:var(--warning);font-weight:600;">' + seatDisplay + '</span>'
         : '<strong>' + seatDisplay + '</strong>';
+      // コースバッジ：料理／飲み放題があれば目立つバッジで別行表示
+      let courseBadgeHtml = '';
+      if (course && course.type && course.type !== '席だけ' && course.type !== '席のみ') {
+        const tp = course.type;
+        const isPremium = tp.indexOf('プレミアム') >= 0 || course.id === 'E';
+        const isDrink = tp.indexOf('飲み放題') >= 0;
+        const isMeal  = tp.indexOf('料理') >= 0;
+        const cls = isPremium ? 'premium' : (isDrink ? 'drink' : '');
+        const icon = isPremium ? '🍷' : (isDrink ? '🍶' : (isMeal ? '🍱' : '🍽️'));
+        courseBadgeHtml = '<div><span class="course-badge ' + cls + '">' + icon + ' ' + course.name + '</span></div>';
+      }
       return ''
         + '<div class="reservation-item ' + r.status + '">'
         +   '<div class="top">'
@@ -5180,7 +5214,8 @@ function renderReservationList() {
         +         '<span title="' + sourceTitle + '" style="margin-right:4px">' + sourceMark + '</span>'
         +         r.time + ' / ' + r.people + '名 / ' + r.name + '様'
         +       '</div>'
-        +       '<div class="meta">' + ((course && course.name) || '') + ' ／ 席：' + seatHtml + ' ／ ' + r.phone + '</div>'
+        +       courseBadgeHtml
+        +       '<div class="meta">席：' + seatHtml + ' ／ ' + r.phone + (courseBadgeHtml ? '' : (course && course.name ? ' ／ ' + course.name : '')) + '</div>'
         +       (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
         +       (r.handwriting ? '<div class="meta">✍️<br><img src="' + r.handwriting + '" style="max-width:240px;border:1px solid #ddd;border-radius:6px;background:#fff;"></div>' : '')
         +     '</div>'
