@@ -1085,21 +1085,6 @@ select.time-select option:disabled { color: #aaa; }
   </div>
 
   <div class="field">
-    <label>お子様の内訳</label>
-    <div class="row">
-      <div class="field">
-        <label style="font-size:11px;color:var(--muted)">幼児</label>
-        <input type="number" id="kidInfant" value="0" min="0" max="20" inputmode="numeric" />
-      </div>
-      <div class="field">
-        <label style="font-size:11px;color:var(--muted)">小学生</label>
-        <input type="number" id="kidElementary" value="0" min="0" max="20" inputmode="numeric" />
-      </div>
-    </div>
-    <div class="hint">中学生以上は大人扱い・コース対象</div>
-  </div>
-
-  <div class="field">
     <label>コース選択<span class="req">*</span></label>
     <div class="choice-grid" id="courseGrid"></div>
     <div class="hint" id="courseHint">コース料金は中学生以上の人数で計算</div>
@@ -1116,6 +1101,21 @@ select.time-select option:disabled { color: #aaa; }
   <div class="field">
     <label>特記事項</label>
     <textarea id="notes" rows="2" placeholder="アレルギー・お祝い・ベビーカー等"></textarea>
+  </div>
+
+  <div class="field" style="background:#f9f3eb;padding:10px 12px;border-radius:8px;border:1px solid var(--border);">
+    <label>お子様の内訳（任意）</label>
+    <div class="row">
+      <div class="field" style="margin-bottom:0;">
+        <label style="font-size:11px;color:var(--muted)">幼児</label>
+        <input type="number" id="kidInfant" value="0" min="0" max="20" inputmode="numeric" />
+      </div>
+      <div class="field" style="margin-bottom:0;">
+        <label style="font-size:11px;color:var(--muted)">小学生</label>
+        <input type="number" id="kidElementary" value="0" min="0" max="20" inputmode="numeric" />
+      </div>
+    </div>
+    <div class="hint">中学生以上は大人扱い・コース対象</div>
   </div>
 
   <button class="primary" onclick="confirmReservation()">予約内容を確認</button>
@@ -3682,11 +3682,17 @@ function renderCourseGrid() {
       div.addEventListener('click', () => {
         state.selectedCourse = c.id;
         renderCourseGrid();
-        // 4) コース選択 → 予約内容確認ボタンへスクロール
+        // 4) コース選択 → 「予約内容を確認」ボタンへ自動スクロール（ボタンを中央〜下部に）
         setTimeout(function() {
           var btn = document.querySelector('#step2 button.primary');
-          if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 100);
+          if (btn) {
+            btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // 一瞬ハイライトしてどこに着地したか分かりやすく
+            btn.style.transition = 'box-shadow .3s';
+            btn.style.boxShadow = '0 0 0 4px rgba(200,32,29,0.25)';
+            setTimeout(function() { btn.style.boxShadow = ''; }, 900);
+          }
+        }, 120);
       });
     }
     grid.appendChild(div);
@@ -4427,6 +4433,8 @@ function openEditModal(resId) {
          + '</option>';
   }).join('');
 
+  const otherStore = (resStore === 'revolverd') ? 'torihashi' : 'revolverd';
+  const otherLabel = (otherStore === 'revolverd') ? '🥃 リボ' : '🐔 鳥はし';
   overlay.innerHTML =
     '<div class="modal" style="max-width:440px;">'
     + '<h3 style="margin-top:0;">予約を編集（' + (resStore === 'revolverd' ? '🥃 リボ' : '🐔 鳥はし') + '）</h3>'
@@ -4441,6 +4449,13 @@ function openEditModal(resId) {
     + '<div style="display:flex;gap:8px;margin-top:8px;">'
     + '<button class="secondary" id="cancelEditBtn" style="flex:1;">やめる</button>'
     + '<button class="primary" id="saveEditBtn" style="flex:1;">保存</button>'
+    + '</div>'
+    + '<div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border);">'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;text-align:center;">他店舗に振り分け</div>'
+    + '<div style="display:flex;gap:8px;">'
+    + '<button class="secondary" id="moveStoreBtn" style="flex:1;border-color:#1976d2;color:#1976d2;">→ ' + otherLabel + 'へ <strong>移動</strong></button>'
+    + '<button class="secondary" id="copyStoreBtn" style="flex:1;border-color:#2e7d32;color:#2e7d32;">→ ' + otherLabel + 'へ <strong>コピー</strong></button>'
+    + '</div>'
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
@@ -4501,6 +4516,104 @@ function openEditModal(resId) {
         setTimeout(function() { updateSyncStatus(''); }, 3000);
       });
     }
+  });
+
+  // 他店舗へ移動／コピー
+  document.getElementById('moveStoreBtn').addEventListener('click', function() {
+    if (!confirm(otherLabel + 'へ移動します。\n（元店舗のカレンダーはキャンセル扱いになります）\n\nよろしいですか？')) return;
+    overlay.remove();
+    transferReservationToStore(r.id, otherStore, 'move');
+  });
+  document.getElementById('copyStoreBtn').addEventListener('click', function() {
+    if (!confirm(otherLabel + 'へコピーします。\n（元の予約はそのまま残ります）\n\nよろしいですか？')) return;
+    overlay.remove();
+    transferReservationToStore(r.id, otherStore, 'copy');
+  });
+}
+
+// ============================================================
+// 他店舗へ移動／コピー
+// ============================================================
+function transferReservationToStore(resId, targetStore, mode) {
+  const orig = reservations.find(function(x) { return x.id === resId; });
+  if (!orig) return;
+  const targetLabel = targetStore === 'revolverd' ? '🥃 リボ' : '🐔 鳥はし';
+  // 新しい予約データを作成（席・コースは初期化、ユーザーが後で調整）
+  const newId = (mode === 'move')
+    ? orig.id              // 同じIDで移動
+    : ('R' + genId().substring(1)); // コピーは新規ID
+  const defaultCourse = targetStore === 'revolverd' ? 'RS' : 'S';
+  const newRes = Object.assign({}, orig, {
+    id: newId,
+    store: targetStore,
+    seat: '未設定',
+    course: defaultCourse,
+    source: 'pwa',
+    gcalEventId: undefined,
+    createdAt: Date.now()
+  });
+
+  if (mode === 'move') {
+    // 既存予約を置換
+    const idx = reservations.findIndex(function(x) { return x.id === resId; });
+    if (idx >= 0) reservations[idx] = newRes;
+  } else {
+    // コピー → 追加
+    reservations.push(newRes);
+  }
+  saveReservations();
+  renderReservationList();
+  if (typeof renderSeatMap === 'function') renderSeatMap();
+
+  if (!isWebhookConfigured()) {
+    alert('✓ ' + (mode === 'move' ? '移動' : 'コピー') + 'しました（端末内のみ）');
+    return;
+  }
+
+  updateSyncStatus((mode === 'move' ? '移動' : 'コピー') + '同期中...', '#ef6c00');
+
+  // 1) 移動の場合：元店舗カレンダーの予約をキャンセル扱いに
+  const step1 = (mode === 'move' && orig.gcalEventId)
+    ? callWebhook({ action: 'cancel', store: orig.store || 'torihashi', eventId: orig.gcalEventId })
+    : Promise.resolve({ ok: true });
+
+  // 2) 新店舗カレンダーへ新規作成
+  step1.then(function() {
+    const startDate = new Date(newRes.date + 'T' + newRes.time + ':00');
+    const endDate   = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
+    const newTitle  = buildEventTitle(newRes);
+    const course    = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === newRes.course; });
+    const newDesc   = [
+      '予約ID: ' + newRes.id,
+      'ステータス: ' + (newRes.status === 'confirmed' ? '確定' : '仮押さえ'),
+      '人数: ' + newRes.people + '名',
+      'コース: ' + (course ? course.name : '席だけ'),
+      '席: ' + (newRes.seat || '未設定'),
+      '電話: ' + newRes.phone,
+      '受付: PWA直接（' + (mode === 'move' ? '他店舗から移動' : '他店舗からコピー') + '）',
+      '特記: ' + (newRes.notes || 'なし')
+    ].join('\n');
+    return callWebhook({
+      action: 'create',
+      store: targetStore,
+      title: newTitle,
+      description: newDesc,
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+      colorId: newRes.status === 'confirmed' ? '10' : '5'
+    });
+  }).then(function(resp) {
+    if (resp && resp.ok && resp.eventId) {
+      newRes.gcalEventId = resp.eventId;
+      saveReservations();
+      updateSyncStatus('✓ ' + targetLabel + 'へ同期OK', '#2e7d32');
+    } else {
+      updateSyncStatus('⚠ 同期失敗（端末内に保存）', '#c62828');
+    }
+    setTimeout(function() { updateSyncStatus(''); }, 4000);
+  }).catch(function() {
+    updateSyncStatus('⚠ 同期失敗', '#c62828');
+    setTimeout(function() { updateSyncStatus(''); }, 4000);
   });
 }
 
