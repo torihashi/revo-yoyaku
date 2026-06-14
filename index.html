@@ -964,6 +964,61 @@ select.time-select option:disabled { color: #aaa; }
 .bottom-nav button .icon { font-size: 22px; }
 
 /* ========================================
+   アクティビティログ
+======================================== */
+.log-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.log-row:last-child { border-bottom: none; }
+.log-row .ts {
+  color: var(--muted);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.log-row .body { color: var(--text); }
+.log-row .user {
+  font-weight: 700;
+  color: var(--primary-dark);
+  margin-right: 5px;
+}
+.log-row .action {
+  display: inline-block;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  margin-right: 5px;
+}
+.log-row .target { color: var(--text); }
+.log-row .detail {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+  grid-column: 2;
+}
+.log-row.store-revo .action {
+  background: #e8f5e9;
+  color: #1b5e20;
+}
+.log-day-divider {
+  background: linear-gradient(to right, var(--primary-light), transparent);
+  color: var(--primary-dark);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border-top: 1px solid var(--border);
+}
+.log-day-divider:first-child { border-top: none; }
+
+/* ========================================
    認証ゲート（ログイン画面）
 ======================================== */
 #authGate {
@@ -1458,6 +1513,20 @@ select.time-select option:disabled { color: #aaa; }
       </div>
     </div>
   </div>
+
+  <!-- アクティビティログ（座席表内・全員閲覧可） -->
+  <div class="card" id="activityLogCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>📜 アクティビティログ（直近4日）</span>
+      <button id="logRefreshBtn" type="button" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 更新</button>
+    </h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      予約・編集・席変更・シフト・ログイン等の操作履歴
+    </div>
+    <div id="activityLogList" style="max-height:380px;overflow-y:auto;">
+      <div class="empty-state" style="padding:16px;">読み込み中...</div>
+    </div>
+  </div>
 </section>
 
 <!-- ============================================ -->
@@ -1758,6 +1827,91 @@ function callWebhook(payload) {
 }
 
 // ============================================================
+// アクティビティログ送信
+// ============================================================
+// ログ一覧取得＋描画
+function fetchAndRenderActivityLog() {
+  const list = document.getElementById('activityLogList');
+  if (!list) return;
+  if (!isWebhookConfigured()) {
+    list.innerHTML = '<div class="empty-state">Webhook未設定のためログは取得できません</div>';
+    return;
+  }
+  list.innerHTML = '<div class="empty-state" style="padding:16px;">読み込み中...</div>';
+  const url = WEBHOOK_URL
+    + '?action=listLogs&days=4'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET);
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(resp) {
+      if (!resp || !resp.ok || !Array.isArray(resp.items)) {
+        list.innerHTML = '<div class="empty-state">ログの取得に失敗しました</div>';
+        return;
+      }
+      if (resp.items.length === 0) {
+        list.innerHTML = '<div class="empty-state">直近4日間にログはありません</div>';
+        return;
+      }
+      // 店舗フィルタなし（全員全店分閲覧可・透明性重視）
+      const html = renderLogItems(resp.items);
+      list.innerHTML = html;
+    })
+    .catch(function(err) {
+      list.innerHTML = '<div class="empty-state">通信エラー：' + String(err) + '</div>';
+    });
+}
+
+function renderLogItems(items) {
+  // 日付ごとにグルーピング表示
+  const wd = ['日','月','火','水','木','金','土'];
+  let html = '';
+  let lastDay = '';
+  items.forEach(function(it) {
+    const d = new Date(it.timestamp);
+    const dayKey = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+    if (dayKey !== lastDay) {
+      const label = (d.getMonth()+1) + '月' + d.getDate() + '日（' + wd[d.getDay()] + '）';
+      html += '<div class="log-day-divider">' + label + '</div>';
+      lastDay = dayKey;
+    }
+    const tm = String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
+    const storeMark = it.store === 'revolverd' ? '🥃' : it.store === 'torihashi' ? '🐔' : '';
+    const cls = it.store === 'revolverd' ? ' store-revo' : '';
+    html += '<div class="log-row' + cls + '">'
+         + '<div class="ts">' + tm + '<br>' + storeMark + '</div>'
+         + '<div class="body">'
+         +   '<span class="user">' + escHtml(it.user || '?') + '</span>'
+         +   '<span class="action">' + escHtml(it.action || '-') + '</span>'
+         +   (it.target ? '<span class="target">' + escHtml(it.target) + '</span>' : '')
+         +   (it.detail ? '<div class="detail">' + escHtml(it.detail) + '</div>' : '')
+         + '</div>'
+         + '</div>';
+  });
+  return html;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function logActivity(actionName, target, detail) {
+  // ログインしていない or Webhook未設定なら何もしない
+  if (!currentUser || !currentUser.name) return;
+  if (!isWebhookConfigured()) return;
+  // 非同期で送信（失敗しても無視）
+  try {
+    callWebhook({
+      action: 'logAction',
+      user: currentUser.name,
+      store: currentStore,
+      actionName: actionName,
+      target: target || '',
+      detail: detail || ''
+    }).catch(function() {});
+  } catch (e) {}
+}
+
+// ============================================================
 // 認証システム（メールアドレスベース）
 // ============================================================
 const AUTH_KEY = 'pwa_auth_v1';
@@ -1849,6 +2003,7 @@ function attemptLogin(email, pin) {
     .then(function(r) { return r.json(); })
     .then(function(resp) {
       if (resp && resp.ok) {
+        const wasLoggedOut = !currentUser;
         currentUser = {
           email: email,
           pin: pin, // 再検証用に保存（端末内のみ・ネットには平文で都度送信）
@@ -1859,6 +2014,10 @@ function attemptLogin(email, pin) {
           loggedInAt: Date.now()
         };
         saveAuth(currentUser);
+        // 新規ログインの時のみログ記録（再検証時は記録しない）
+        if (wasLoggedOut) {
+          setTimeout(function() { logActivity('🔐 ログイン', '', ''); }, 100);
+        }
         return true;
       }
       const e = (resp && resp.error) || 'unknown';
@@ -1942,6 +2101,8 @@ function checkAuthOnBoot() {
 document.addEventListener('DOMContentLoaded', function() {
   const btn = document.getElementById('authLoginBtn');
   if (btn) btn.addEventListener('click', doLogin);
+  const logBtn = document.getElementById('logRefreshBtn');
+  if (logBtn) logBtn.addEventListener('click', fetchAndRenderActivityLog);
   const inpE = document.getElementById('authEmail');
   const inpP = document.getElementById('authPin');
   if (inpE) inpE.addEventListener('keydown', function(e) {
@@ -2565,6 +2726,9 @@ function openStaffShiftModal() {
     overlay.remove();
     try { renderStaffRail(); } catch (e) {}
     updateSyncStatus(currentType === 'unav' ? '不可登録中...' : 'シフト登録中...', '#ef6c00');
+    logActivity(
+      currentType === 'unav' ? '❌ 出勤不可登録' : '👥 シフト登録',
+      title, date + ' ' + currentTime);
 
     callWebhook({
       action: 'createStaffShift',
@@ -3058,10 +3222,14 @@ function _getLastSyncEls() {
   ].filter(Boolean);
 }
 
-function pullFromCalendar() {
+function pullFromCalendar(isManual) {
   if (!isWebhookConfigured()) {
     alert('Webhookが設定されていません');
     return;
+  }
+  // 手動ボタン押下時のみログ（自動同期はログしない）
+  if (isManual !== false) {
+    logActivity('🔄 手動同期', '', '');
   }
   // ボタン視覚状態（複数ボタンに反映）
   const btns = _getRefreshBtns();
@@ -3688,7 +3856,11 @@ function switchTab(name) {
   document.getElementById('tab-seatmap').classList.toggle('hidden', name !== 'seatmap');
   document.getElementById('tab-info').classList.toggle('hidden', name !== 'info');
   if (name === 'list') renderReservationList();
-  if (name === 'seatmap') initSeatMap();
+  if (name === 'seatmap') {
+    initSeatMap();
+    // 座席表表示時にログ一覧も自動更新
+    try { fetchAndRenderActivityLog(); } catch (e) {}
+  }
 }
 
 // ============================================================
@@ -4194,6 +4366,9 @@ function submitReservation() {
   const data = state.pending;
   reservations.push(data);
   saveReservations();
+  // アクティビティログ
+  logActivity('📝 新規予約', data.name + '様 ' + data.date + ' ' + data.time,
+    data.people + '名 ／ ' + (data.seat || '未設定') + ' ／ コース:' + (data.course || '-'));
 
   // Webhook（Phase 3）: 予約カレンダーへ書込
   if (isWebhookConfigured()) {
@@ -4662,6 +4837,7 @@ function cancelReservation(resId) {
   saveReservations();
   renderReservationList();
   if (typeof renderSeatMap === 'function') renderSeatMap();
+  logActivity('❌ キャンセル', r.name + '様 ' + r.date + ' ' + r.time, '人数:' + (r.people || 0) + '名');
 
   // Webhook 経由でカレンダーも更新（GCalイベントタイトルに [キャンセル] 付与）
   if (isWebhookConfigured() && r.gcalEventId) {
@@ -4699,6 +4875,7 @@ function restoreReservation(resId) {
   r.status = 'confirmed';
   saveReservations();
   renderReservationList();
+  logActivity('🔄 復元', r.name + '様 ' + r.date + ' ' + r.time, '');
   if (typeof renderSeatMap === 'function') renderSeatMap();
 
   // Webhook 経由でカレンダー側も復元（[キャンセル]マークを外す）
@@ -4796,6 +4973,8 @@ function openEditModal(resId) {
     overlay.remove();
     renderReservationList();
     if (typeof renderSeatMap === 'function') renderSeatMap();
+    logActivity('✏️ 予約編集', r.name + '様 ' + r.date + ' ' + r.time,
+      r.people + '名 ／ ' + r.seat + ' ／ コース:' + r.course);
 
     // Webhook で GCal も更新
     if (isWebhookConfigured() && r.gcalEventId) {
@@ -4880,6 +5059,10 @@ function transferReservationToStore(resId, targetStore, mode) {
   saveReservations();
   renderReservationList();
   if (typeof renderSeatMap === 'function') renderSeatMap();
+  logActivity(
+    mode === 'move' ? '🔀 他店舗へ移動' : '📋 他店舗へコピー',
+    orig.name + '様 ' + orig.date + ' ' + orig.time,
+    (orig.store || 'torihashi') + ' → ' + targetStore);
 
   if (!isWebhookConfigured()) {
     alert('✓ ' + (mode === 'move' ? '移動' : 'コピー') + 'しました（端末内のみ）');
@@ -5476,6 +5659,8 @@ function submitTakeout() {
   const data = takeoutState.pending;
   reservations.push(data);
   saveReservations();
+  logActivity('🥡 お土産予約', data.name + '様 ' + data.date + ' ' + data.time,
+    data.count + '点 ／ 合計' + (data.total || 0).toLocaleString() + '円');
 
   // Webhook: お土産予約をGCalへ
   if (isWebhookConfigured()) {
@@ -6291,12 +6476,16 @@ function assignSeatToReservation(resId, newSeat) {
     return;
   }
 
+  const prevSeat = r.seat;
   r.seat = targetSeat;
   saveReservations();
   cancelMoveMode();
   renderSeatMap();
   // 視覚フィードバック：割り当てた席をピカッと光らせる
   pulseAssignedSeats(targetSeat);
+  if (prevSeat !== targetSeat) {
+    logActivity('🪑 席移動', r.name + '様 ' + r.date + ' ' + r.time, (prevSeat || '未') + ' → ' + targetSeat);
+  }
   // Webhook 経由でカレンダーも更新
   if (isWebhookConfigured() && r.gcalEventId) {
     updateSyncStatus('席変更を同期中...', '#ef6c00');
