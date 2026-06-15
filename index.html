@@ -4506,11 +4506,16 @@ function displaySeat(rawSeat) {
   return rawSeat;
 }
 
-// 予約が要席指定か判定（Yahoo!のご予約1〜4・未設定・当日決定 等を含む）
+// 予約が要席指定か判定（Yahoo!のご予約1〜4・AutoReserve・ぐるなび・未設定・当日決定 等を含む）
 function isPendingSeat(rawSeat) {
   if (!rawSeat) return true;
   if (rawSeat === '未設定' || rawSeat === '当日決定' || rawSeat === '自動') return true;
   if (YAHOO_SEAT_MAP[rawSeat] && YAHOO_SEAT_MAP[rawSeat].pending) return true;
+  // GAS統合版でマッピング済みの表示ラベルもカバー
+  // Yahoo!リザベ：「ご予約1(2〜4名)」「ご予約4(5〜8名)」など
+  if (/^ご予約\s*\d/.test(rawSeat)) return true;
+  // AutoReserve / ぐるなび：「カウンター(要席指定)」「テーブル(要席指定)」「奥座敷(要席指定)」「個室(要席指定)」等
+  if (/要席指定/.test(rawSeat)) return true;
   return false;
 }
 
