@@ -1185,7 +1185,7 @@ select.time-select option:disabled { color: #aaa; }
 
   <div class="field">
     <label>日付<span class="req">*</span></label>
-    <input type="date" id="resDate" />
+    <input type="date" id="resDate" onchange="onResDateChange()" oninput="onResDateChange()" />
     <div class="cal-grid-wrap" data-target="resDate" data-onchange="onResDateChange"></div>
   </div>
 
@@ -4286,6 +4286,17 @@ function toKatakana(s) {
 }
 
 function confirmReservation() {
+  // 🛡 安全弁：入力欄の最新の日付を必ず state にも反映（バグ防止）
+  const resDateInp = document.getElementById('resDate');
+  if (resDateInp && resDateInp.value && state.date !== resDateInp.value) {
+    state.date = resDateInp.value;
+  }
+  // state.date が空ならエラー
+  if (!state.date) {
+    alert('日付が未設定です。最初から入力をやり直してください。');
+    return;
+  }
+
   // 名前はカタカナに正規化
   const nameInput = document.getElementById('custName');
   nameInput.value = toKatakana(nameInput.value.trim());
@@ -6381,9 +6392,15 @@ function initAllCalendars() {
 }
 
 // 新規予約の日付変更時に呼ばれる
+// 入力欄で日付を変更したらすぐに state.date を更新する（バグ防止：確認画面で本日が出るのを防ぐ）
 function onResDateChange() {
-  // 既存の resDate input にハンドラがなければ、ここで再描画など追加
-  // 何もしなくてもユーザーが「空き時間を確認」を押す流れ
+  const inp = document.getElementById('resDate');
+  if (!inp || !inp.value) return;
+  if (state.date !== inp.value) {
+    state.date = inp.value;
+    // 日付が変わったら空き判定は無効化（時間スロットを再判定が必要）
+    state.availabilityChecked = false;
+  }
 }
 
 // 座席表の日付変更ハンドラ（quick-date から呼ばれる）
