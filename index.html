@@ -221,9 +221,10 @@ button.secondary:active { background: var(--primary); color: white; }
 }
 /* コンパクト表示：1行サマリ（タップで展開） */
 .ri-summary {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
   cursor: pointer; user-select: none;
   padding: 4px 0;
+  flex-wrap: nowrap;
 }
 .ri-summary:active { background: rgba(0,0,0,.03); }
 .ri-summary .ri-time {
@@ -264,6 +265,23 @@ button.secondary:active { background: var(--primary); color: white; }
   margin-top: 6px;
 }
 .reservation-item.expanded .ri-details { display: block; }
+
+/* 1行サマリ用のコース小バッジ（高さそのまま情報追加） */
+.ri-summary .ri-course-mini {
+  font-size: 11px; font-weight: 700;
+  padding: 1px 6px; border-radius: 8px;
+  flex-shrink: 0; white-space: nowrap;
+}
+.ri-summary .ri-course-mini.meal { background: #fce4ec; color: #ad1457; border: 1px solid #f48fb1; }
+.ri-summary .ri-course-mini.drink { background: #fff3e0; color: #e65100; border: 1px solid #ffb74d; }
+.ri-summary .ri-course-mini.premium { background: #ede7f6; color: #4527a0; border: 1px solid #b39ddb; }
+.ri-summary .ri-course-mini.seat-only { background: #e0f2f1; color: #00695c; border: 1px solid #80cbc4; }
+/* お土産用：商品情報を1行内に */
+.ri-summary .ri-takeout-info {
+  font-size: 11px; color: var(--muted);
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 
 /* キャンセル予約：超コンパクト1行 */
 .reservation-item.cancelled-compact {
@@ -1458,6 +1476,11 @@ select.time-select option:disabled { color: #aaa; }
     </div>
     <div style="font-size:11px; color:var(--muted); padding:6px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:8px;">
       ⚫ Yahoo!リザベ取込　／　◾️ AutoReserve取込　／　⚪ PWA直接入力
+    </div>
+    <!-- 新規予約クイックアクセス -->
+    <div style="display:flex;gap:6px;margin-bottom:10px;">
+      <button class="primary" onclick="quickNewReservationFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">＋ 新規予約</button>
+      <button class="secondary" onclick="quickNewTakeoutFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">🥡 新規お土産</button>
     </div>
     <div id="reservationList"></div>
     <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:13px;">
@@ -6040,6 +6063,40 @@ function toggleResExpand(summaryEl) {
   item.classList.toggle('expanded');
 }
 
+// 一覧から新規予約へ：表示中の日付を引き継いで遷移
+function quickNewReservationFromList() {
+  const listDate = document.getElementById('listDate');
+  const targetDate = (listDate && listDate.value) || todayStr();
+  // 新規予約タブの日付欄に反映
+  const resDate = document.getElementById('resDate');
+  if (resDate) resDate.value = targetDate;
+  // state 同期
+  try { state.date = targetDate; state.preselectedSeat = null; } catch (e) {}
+  switchTab('new');
+  // step1 を表示
+  try {
+    document.getElementById('step1').classList.remove('hidden');
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('step3').classList.add('hidden');
+    state.step = 1;
+  } catch (e) {}
+  // 人数フィールドにフォーカス
+  setTimeout(function() {
+    const ppl = document.getElementById('resPeople');
+    if (ppl) { ppl.focus(); ppl.select(); }
+  }, 200);
+}
+// 一覧から新規お土産予約へ
+function quickNewTakeoutFromList() {
+  const listDate = document.getElementById('listDate');
+  const targetDate = (listDate && listDate.value) || todayStr();
+  switchTab('new');
+  const resDate = document.getElementById('resDate');
+  if (resDate) resDate.value = targetDate;
+  try { state.date = targetDate; } catch (e) {}
+  if (typeof startTakeoutFlow === 'function') startTakeoutFlow();
+}
+
 function renderReservationList() {
   const date = document.getElementById('listDate').value;
   const list = document.getElementById('reservationList');
@@ -6077,13 +6134,19 @@ function renderReservationList() {
       // ====== お土産予約（有効）：折りたたみ表示 ======
       if (r.type === 'takeout') {
         const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+        // 商品概要を1〜2品目だけ抜粋
+        const firstItems = (r.entries && r.entries.length > 0)
+          ? r.entries.slice(0, 2).map(function(e) { return e.name + '×' + e.qty; }).join(',')
+            + (r.entries.length > 2 ? '...' : '')
+          : (r.summary || '').substring(0, 30);
         return ''
           + '<div class="reservation-item active" data-rid="' + r.id + '">'
           +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
           +     '<span class="ri-time">🥡' + r.time + '</span>'
           +     '<span class="ri-people">' + (r.count || 0) + '点</span>'
           +     '<span class="ri-name">' + r.name + '様</span>'
-          +     '<span class="ri-seat-mini">' + (r.total || 0).toLocaleString() + '円</span>'
+          +     '<span class="ri-takeout-info">' + firstItems + '</span>'
+          +     '<span class="ri-course-mini drink">' + (r.total || 0).toLocaleString() + '円</span>'
           +     statusTag
           +     '<span class="ri-expand">▾</span>'
           +   '</div>'
@@ -6109,16 +6172,27 @@ function renderReservationList() {
         ? '<span class="ri-seat-mini" style="background:#fff3cd;color:#856404;">⚠席未</span>'
         : '<span class="ri-seat-mini">席:' + r.seat + '</span>';
       const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
-      // コースバッジ
+
+      // コースの種別判定（1行ミニバッジ用）
+      let miniCourseHtml = '';
       let courseBadgeHtml = '';
       if (course && course.type && course.type !== '席だけ' && course.type !== '席のみ') {
         const tp = course.type;
         const isPremium = tp.indexOf('プレミアム') >= 0 || course.id === 'E';
         const isDrink = tp.indexOf('飲み放題') >= 0;
         const isMeal  = tp.indexOf('料理') >= 0;
-        const cls = isPremium ? 'premium' : (isDrink ? 'drink' : '');
+        const cls = isPremium ? 'premium' : (isDrink ? 'drink' : (isMeal ? 'meal' : ''));
         const icon = isPremium ? '🍷' : (isDrink ? '🍶' : (isMeal ? '🍱' : '🍽️'));
+        // 詳細展開用の大バッジ
         courseBadgeHtml = '<div><span class="course-badge ' + cls + '">' + icon + ' ' + course.name + '</span></div>';
+        // 1行ミニバッジ（高さ変えずに情報追加）
+        const shortLabel = (course.shortName && course.shortName.length > 0)
+          ? course.shortName
+          : (isPremium ? 'プレミ' : isDrink ? '飲放' : isMeal ? '料理' : course.id);
+        miniCourseHtml = '<span class="ri-course-mini ' + cls + '">' + icon + ' ' + shortLabel + '</span>';
+      } else if (course && (course.id === 'S' || course.id === 'RS')) {
+        // 席のみ
+        miniCourseHtml = '<span class="ri-course-mini seat-only">席のみ</span>';
       }
       return ''
         + '<div class="reservation-item active" data-rid="' + r.id + '">'
@@ -6127,6 +6201,7 @@ function renderReservationList() {
         +     '<span class="ri-time">' + r.time + '</span>'
         +     '<span class="ri-people">' + r.people + '名</span>'
         +     '<span class="ri-name">' + r.name + '様</span>'
+        +     miniCourseHtml
         +     seatMini
         +     statusTag
         +     '<span class="ri-expand">▾</span>'
