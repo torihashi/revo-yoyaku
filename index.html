@@ -3800,7 +3800,29 @@ let reservations = [];
 function loadReservations() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      // 既存の壊れた席名（Yahoo プレースホルダー混入）を自動修復
+      let cleanedCount = 0;
+      arr.forEach(function(r) {
+        if (r && r.seat && typeof r.seat === 'string' && r.seat.indexOf('+') >= 0) {
+          // ご予約N(...) や (要席指定) を含む複合席名のみクリーン
+          if (/ご予約\s*\d|要席指定/.test(r.seat)) {
+            const before = r.seat;
+            const after = (typeof cleanSeat === 'function') ? cleanSeat(r.seat) : r.seat;
+            if (after !== before) {
+              r.seat = after;
+              cleanedCount++;
+            }
+          }
+        }
+      });
+      if (cleanedCount > 0) {
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); } catch (e) {}
+        console.log('🧹 壊れた席名を自動修復: ' + cleanedCount + '件');
+      }
+      return arr;
+    }
   } catch (e) {}
   // 予約カレンダーから取得した実データ（2026-05-05時点・Yahoo!リザベ取込分）
   return [
@@ -4794,7 +4816,8 @@ function displaySeat(rawSeat) {
   if (!rawSeat || rawSeat === '未設定') return '未設定（要席指定）';
   if (rawSeat === '自動' || rawSeat === '当日決定') return '未設定（要席指定）';
   if (YAHOO_SEAT_MAP[rawSeat]) return YAHOO_SEAT_MAP[rawSeat].display;
-  return rawSeat;
+  // 複合席名にYahoo等プレースホルダーが混ざっている場合は除去
+  return cleanSeat(rawSeat);
 }
 
 // 予約が要席指定か判定（Yahoo!のご予約1〜4・AutoReserve・ぐるなび・未設定・当日決定 等を含む）
@@ -4916,11 +4939,15 @@ function openSeatEditor(resId, preselectSeat) {
 
   // 初期選択トークン
   let selectedTokens = [];
-  const seedSeat = preselectSeat || r.seat;
+  // Yahoo プレースホルダー等を除去してから初期化
+  const seedSeat = cleanSeat(preselectSeat || r.seat);
   if (seedSeat && YAHOO_SEAT_MAP[seedSeat] && YAHOO_SEAT_MAP[seedSeat].tables.length) {
     selectedTokens = YAHOO_SEAT_MAP[seedSeat].tables.slice();
-  } else if (seedSeat && seedSeat !== '未設定' && seedSeat !== '当日決定' && seedSeat !== '自動' && seedSeat !== 'カウンター') {
-    selectedTokens = expandSeat(seedSeat);
+  } else if (seedSeat && seedSeat !== '未設定' && seedSeat !== '当日決定' && seedSeat !== '自動' && seedSeat !== 'カウンター' && !isPendingSeat(seedSeat)) {
+    selectedTokens = expandSeat(seedSeat).filter(function(t) {
+      // プレースホルダーがトークン化された場合も除外
+      return !/^ご予約\s*\d/.test(t) && !/要席指定/.test(t);
+    });
   }
 
   const overlay = document.createElement('div');
@@ -6058,6 +6085,26 @@ function onListDateChange() {
   renderReservationList();
 }
 
+// 席名から Yahoo!リザベ等のプレースホルダー（要席指定ラベル）を除去
+// 例: "ご予約4(5〜8名)+1+2+3" → "1+2+3"
+//     "カウンター(要席指定)+11+12" → "11+12"
+function cleanSeat(rawSeat) {
+  if (!rawSeat || typeof rawSeat !== 'string') return rawSeat;
+  if (rawSeat.indexOf('+') < 0) return rawSeat;
+  const parts = rawSeat.split('+').map(function(s) { return s.trim(); });
+  const cleaned = parts.filter(function(t) {
+    if (!t) return false;
+    // Yahoo!プレースホルダー（ご予約N(... )）を除外
+    if (/^ご予約\s*\d/.test(t)) return false;
+    // AutoReserve/ぐるなびの「○○(要席指定)」プレースホルダーを除外
+    if (/要席指定/.test(t)) return false;
+    return true;
+  });
+  // 全てプレースホルダーだった場合は元のまま
+  if (cleaned.length === 0) return rawSeat;
+  return cleaned.join('+');
+}
+
 // 席名を短縮表示用に圧縮（連番は範囲表記）
 //   例: "R1+R2+R3+R4+R5+R6" → "R1〜6"
 //       "11+12+13" → "11〜13"
@@ -6066,7 +6113,9 @@ function onListDateChange() {
 //       "11+12" → "11+12"（2席なら短縮しない）
 function compactSeat(rawSeat) {
   if (!rawSeat) return rawSeat;
-  // すでに「〜」「(」などを含む場合はそのまま返す（Yahoo等の表示用ラベル）
+  // まず Yahoo プレースホルダー等を除去
+  rawSeat = cleanSeat(rawSeat);
+  // すでに「〜」「(」などを含む場合はそのまま返す（純粋な表示ラベル）
   if (/[〜()（）]/.test(rawSeat)) return rawSeat;
   if (rawSeat.indexOf('+') < 0) return rawSeat;
   const parts = rawSeat.split('+').map(function(s) { return s.trim(); });
@@ -6939,14 +6988,16 @@ function assignSeatToReservation(resId, newSeat) {
   }
 
   const prevSeat = r.seat;
-  r.seat = targetSeat;
+  // 保存時にも Yahoo プレースホルダーを除去
+  const cleanedTarget = cleanSeat(targetSeat);
+  r.seat = cleanedTarget;
   saveReservations();
   cancelMoveMode();
   renderSeatMap();
   // 視覚フィードバック：割り当てた席をピカッと光らせる
-  pulseAssignedSeats(targetSeat);
-  if (prevSeat !== targetSeat) {
-    logActivity('🪑 席移動', r.name + '様 ' + r.date + ' ' + r.time, (prevSeat || '未') + ' → ' + targetSeat);
+  pulseAssignedSeats(cleanedTarget);
+  if (prevSeat !== cleanedTarget) {
+    logActivity('🪑 席移動', r.name + '様 ' + r.date + ' ' + r.time, (prevSeat || '未') + ' → ' + cleanedTarget);
   }
   // Webhook 経由でカレンダーも更新
   if (isWebhookConfigured() && r.gcalEventId) {
