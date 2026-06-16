@@ -217,7 +217,80 @@ button.secondary:active { background: var(--primary); color: white; }
 .time-btn.selected .slot-status { background: rgba(255,255,255,.25); color: white; }
 
 .reservation-item {
-  padding: 12px; border-bottom: 1px solid var(--border);
+  padding: 8px 10px; border-bottom: 1px solid var(--border);
+}
+/* コンパクト表示：1行サマリ（タップで展開） */
+.ri-summary {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; user-select: none;
+  padding: 4px 0;
+}
+.ri-summary:active { background: rgba(0,0,0,.03); }
+.ri-summary .ri-time {
+  font-weight: 700; color: var(--primary-dark);
+  font-size: 15px; flex-shrink: 0;
+}
+.ri-summary .ri-people {
+  font-size: 13px; font-weight: 600;
+  background: var(--primary-light); color: var(--primary-dark);
+  padding: 1px 7px; border-radius: 10px; flex-shrink: 0;
+}
+.ri-summary .ri-name {
+  font-size: 14px; font-weight: 600; color: var(--text);
+  flex: 1; min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ri-summary .ri-seat-mini {
+  font-size: 11px; color: var(--muted);
+  background: #f5f5f5; padding: 1px 6px; border-radius: 8px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.ri-summary .ri-status-mini {
+  font-size: 10px; padding: 1px 6px; border-radius: 6px;
+  font-weight: 600; flex-shrink: 0;
+}
+.ri-summary .ri-status-mini.tentative {
+  background: var(--warning-bg); color: var(--warning);
+}
+.ri-summary .ri-expand {
+  color: var(--muted); font-size: 14px;
+  transition: transform .2s; flex-shrink: 0;
+}
+.reservation-item.expanded .ri-expand { transform: rotate(180deg); }
+.ri-details {
+  display: none;
+  padding: 6px 0 4px;
+  border-top: 1px dashed var(--border);
+  margin-top: 6px;
+}
+.reservation-item.expanded .ri-details { display: block; }
+
+/* キャンセル予約：超コンパクト1行 */
+.reservation-item.cancelled-compact {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  background: #fafafa;
+  opacity: 0.7;
+}
+.reservation-item.cancelled-compact .cancel-text {
+  flex: 1;
+  text-decoration: line-through;
+  text-decoration-thickness: 1.5px;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.reservation-item.cancelled-compact .cancel-tag {
+  font-size: 10px; background: #e0e0e0; color: #555;
+  padding: 1px 6px; border-radius: 5px;
+  font-weight: 600; flex-shrink: 0;
+}
+.reservation-item.cancelled-compact .restore-link {
+  font-size: 11px; color: #2e7d32; font-weight: 600;
+  background: transparent; border: 1px solid #2e7d32;
+  padding: 2px 8px; border-radius: 8px;
+  cursor: pointer; font-family: inherit;
+  flex-shrink: 0;
 }
 .reservation-item:last-child { border-bottom: none; }
 .reservation-item .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -5960,6 +6033,13 @@ function onListDateChange() {
   renderReservationList();
 }
 
+// 予約カードの展開／折りたたみ
+function toggleResExpand(summaryEl) {
+  const item = summaryEl.closest('.reservation-item');
+  if (!item) return;
+  item.classList.toggle('expanded');
+}
+
 function renderReservationList() {
   const date = document.getElementById('listDate').value;
   const list = document.getElementById('reservationList');
@@ -5973,8 +6053,6 @@ function renderReservationList() {
   } else {
     list.innerHTML = dayRes.map(function(r) {
       const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
-      const statusLabel = r.status === 'confirmed' ? '確定'
-                        : r.status === 'tentative' ? '仮押さえ' : 'キャンセル';
       const sourceMark = r.source === 'yahoo'       ? '⚫'
                        : r.source === 'autoreserve' ? '◾️'
                        :                              '';
@@ -5982,35 +6060,56 @@ function renderReservationList() {
                         : r.source === 'autoreserve' ? 'AutoReserve'
                         : r.source === 'pwa'         ? 'PWA直接'
                         :                              '';
-      // お土産予約は別表示
-      if (r.type === 'takeout') {
+
+      // ====== キャンセル予約：1行コンパクト ======
+      if (r.status === 'cancelled') {
+        const sumText = r.type === 'takeout'
+          ? '🥡 ' + r.time + ' / ' + r.name + '様（お土産）'
+          : r.time + ' / ' + r.people + '名 / ' + r.name + '様';
         return ''
-          + '<div class="reservation-item ' + r.status + '">'
-          +   '<div class="top">'
-          +     '<div class="info">'
-          +       '<div class="time">🥡 ' + r.time + ' / ' + r.name + '様（お土産）</div>'
-          +       '<div class="meta">' + (r.summary || '') + '</div>'
-          +       '<div class="meta">合計 ' + (r.total || 0).toLocaleString() + '円 ／ ' + r.phone + '</div>'
-          +       (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
-          +       (r.handwriting ? '<div class="meta">✍️<br><img src="' + r.handwriting + '" style="max-width:240px;border:1px solid #ddd;border-radius:6px;background:#fff;"></div>' : '')
-          +     '</div>'
-          +     '<div class="status ' + r.status + '">' + statusLabel + '</div>'
+          + '<div class="reservation-item cancelled-compact">'
+          +   '<span class="cancel-tag">取消</span>'
+          +   '<span class="cancel-text">' + sumText + '</span>'
+          +   '<button class="restore-link" onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
+          + '</div>';
+      }
+
+      // ====== お土産予約（有効）：折りたたみ表示 ======
+      if (r.type === 'takeout') {
+        const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+        return ''
+          + '<div class="reservation-item active" data-rid="' + r.id + '">'
+          +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
+          +     '<span class="ri-time">🥡' + r.time + '</span>'
+          +     '<span class="ri-people">' + (r.count || 0) + '点</span>'
+          +     '<span class="ri-name">' + r.name + '様</span>'
+          +     '<span class="ri-seat-mini">' + (r.total || 0).toLocaleString() + '円</span>'
+          +     statusTag
+          +     '<span class="ri-expand">▾</span>'
           +   '</div>'
-          +   '<div class="actions">'
-          +     (r.status !== 'cancelled' ? '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>' : '')
-          +     (r.status === 'cancelled'
-                  ? '<button style="background:#2e7d32;color:#fff" onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
-                  : '<button class="danger" onclick="cancelReservation(\'' + r.id + '\')">キャンセル</button>')
+          +   '<div class="ri-details">'
+          +     (r.summary ? '<div class="meta">' + r.summary + '</div>' : '')
+          +     '<div class="meta">合計 ' + (r.total || 0).toLocaleString() + '円 ／ ' + (r.phone || '') + '</div>'
+          +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
+          +     '<div class="actions">'
+          +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
+          +       '<button class="danger" onclick="cancelReservation(\'' + r.id + '\')">キャンセル</button>'
+          +     '</div>'
           +   '</div>'
           + '</div>';
       }
 
+      // ====== 通常予約（有効）：折りたたみ表示 ======
       const seatDisplay = displaySeat(r.seat);
       const pending = isPendingSeat(r.seat);
       const seatHtml = pending
         ? '<span style="color:var(--warning);font-weight:600;">' + seatDisplay + '</span>'
         : '<strong>' + seatDisplay + '</strong>';
-      // コースバッジ：料理／飲み放題があれば目立つバッジで別行表示
+      const seatMini = pending
+        ? '<span class="ri-seat-mini" style="background:#fff3cd;color:#856404;">⚠席未</span>'
+        : '<span class="ri-seat-mini">席:' + r.seat + '</span>';
+      const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+      // コースバッジ
       let courseBadgeHtml = '';
       if (course && course.type && course.type !== '席だけ' && course.type !== '席のみ') {
         const tp = course.type;
@@ -6022,26 +6121,25 @@ function renderReservationList() {
         courseBadgeHtml = '<div><span class="course-badge ' + cls + '">' + icon + ' ' + course.name + '</span></div>';
       }
       return ''
-        + '<div class="reservation-item ' + r.status + '">'
-        +   '<div class="top">'
-        +     '<div class="info">'
-        +       '<div class="time">'
-        +         '<span title="' + sourceTitle + '" style="margin-right:4px">' + sourceMark + '</span>'
-        +         r.time + ' / ' + r.people + '名 / ' + r.name + '様'
-        +       '</div>'
-        +       courseBadgeHtml
-        +       '<div class="meta">席：' + seatHtml + ' ／ ' + r.phone + (courseBadgeHtml ? '' : (course && course.name ? ' ／ ' + course.name : '')) + '</div>'
-        +       (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
-        +       (r.handwriting ? '<div class="meta">✍️<br><img src="' + r.handwriting + '" style="max-width:240px;border:1px solid #ddd;border-radius:6px;background:#fff;"></div>' : '')
-        +     '</div>'
-        +     '<div class="status ' + r.status + '">' + statusLabel + '</div>'
+        + '<div class="reservation-item active" data-rid="' + r.id + '">'
+        +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
+        +     (sourceMark ? '<span title="' + sourceTitle + '">' + sourceMark + '</span>' : '')
+        +     '<span class="ri-time">' + r.time + '</span>'
+        +     '<span class="ri-people">' + r.people + '名</span>'
+        +     '<span class="ri-name">' + r.name + '様</span>'
+        +     seatMini
+        +     statusTag
+        +     '<span class="ri-expand">▾</span>'
         +   '</div>'
-        +   '<div class="actions">'
-        +     (r.status !== 'cancelled' ? '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>' : '')
-        +     (r.status !== 'cancelled' ? '<button onclick="openSeatEditor(\'' + r.id + '\')">🪑 席' + (pending ? '指定' : '変更') + '</button>' : '')
-        +     (r.status === 'cancelled'
-                ? '<button style="background:#2e7d32;color:#fff" onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
-                : '<button class="danger" onclick="cancelReservation(\'' + r.id + '\')">キャンセル</button>')
+        +   '<div class="ri-details">'
+        +     courseBadgeHtml
+        +     '<div class="meta">席：' + seatHtml + ' ／ ' + (r.phone || '') + (courseBadgeHtml ? '' : (course && course.name ? ' ／ ' + course.name : '')) + '</div>'
+        +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
+        +     '<div class="actions">'
+        +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
+        +       '<button onclick="openSeatEditor(\'' + r.id + '\')">🪑 席' + (pending ? '指定' : '変更') + '</button>'
+        +       '<button class="danger" onclick="cancelReservation(\'' + r.id + '\')">キャンセル</button>'
+        +     '</div>'
         +   '</div>'
         + '</div>';
     }).join('');
