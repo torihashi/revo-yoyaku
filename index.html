@@ -1689,12 +1689,14 @@ const REVO_RESERVATION_CANDIDATES = [
   { id:'r2122',tables:'R21+R22', area:'2F座卓',     min:6, max:20, note:'結合' },
   { id:'r2223',tables:'R22+R23', area:'2F座卓',     min:6, max:20, note:'結合' },
   { id:'r24',  tables:'R24',     area:'2Fソファー', min:2, max:7,  note:'ソファー' },
+  // 2F分散席：R22が塞がっている時用（R21とR23を分けて利用）
+  { id:'r2123',tables:'R21+R23', area:'2F座卓',     min:6, max:20, note:'分散（R22別予約時の代替）' },
   // 大規模結合（早見表と同じ）
-  { id:'RP-01', tables:'R1+R2+R3+R4',                    area:'1Fテーブル', min:7,  max:10, note:'4卓結合' },
+  { id:'RP-01', tables:'R1+R2+R3+R4',                    area:'1Fテーブル', min:7,  max:12, note:'4卓結合（詰めて12名まで）' },
   { id:'RP-02', tables:'R1+R2+R3',                       area:'1Fテーブル', min:6,  max:8,  note:'3卓結合' },
-  { id:'RP-03', tables:'R1+R2+R3+R4+R5+R6',              area:'1Fテーブル', min:12, max:18, note:'1Fテーブル全卓結合' },
+  { id:'RP-03', tables:'R1+R2+R3+R4+R5+R6',              area:'1Fテーブル', min:10, max:18, note:'1Fテーブル全卓結合（10名以上で活用）' },
   { id:'RP-04', tables:'R11+R12+R13+R14+R15+R16+R17+R18+R1+R2+R3+R4+R5+R6', area:'1F貸切', min:15, max:30, note:'1F全席貸切' },
-  { id:'RP-05', tables:'R21+R22+R23',                    area:'2F全卓',    min:15, max:28, note:'2F座卓3卓結合' },
+  { id:'RP-05', tables:'R21+R22+R23',                    area:'2F全卓',    min:11, max:28, note:'2F座卓3卓結合（11名以上）' },
   { id:'RP-06', tables:'R21+R22+R23+R24',                area:'2F貸切',    min:20, max:35, note:'2Fフロア貸切' },
 ];
 
