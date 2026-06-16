@@ -1466,7 +1466,7 @@ select.time-select option:disabled { color: #aaa; }
     <h2>📋 本日の予約一覧</h2>
     <div class="field sticky-date">
       <label>表示日</label>
-      <input type="date" id="listDate" onchange="onListDateChange()" />
+      <input type="date" id="listDate" onchange="onListDateChange()" oninput="onListDateChange()" />
     </div>
     <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
     <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
@@ -6048,12 +6048,49 @@ function closeTakeoutAndShowSeatmap() {
 function onListDateChange() {
   const listDate = document.getElementById('listDate');
   if (!listDate || !listDate.value) return;
-  // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+  // 自分自身のインラインカレンダーも再描画（緑マークの追従）
+  updateDateInputAndCal('listDate', listDate.value);
+  // 他タブの入力欄＋インラインカレンダーも一括同期
   updateDateInputAndCal('smDate',  listDate.value);
   updateDateInputAndCal('resDate', listDate.value);
   smState.date = listDate.value;
   try { state.date = listDate.value; } catch (e) {}
   renderReservationList();
+}
+
+// 席名を短縮表示用に圧縮（連番は範囲表記）
+//   例: "R1+R2+R3+R4+R5+R6" → "R1〜6"
+//       "11+12+13" → "11〜13"
+//       "31+32+33" → "31〜33"
+//       "R1+R3" → "R1+R3"（非連番はそのまま）
+//       "11+12" → "11+12"（2席なら短縮しない）
+function compactSeat(rawSeat) {
+  if (!rawSeat) return rawSeat;
+  // すでに「〜」「(」などを含む場合はそのまま返す（Yahoo等の表示用ラベル）
+  if (/[〜()（）]/.test(rawSeat)) return rawSeat;
+  if (rawSeat.indexOf('+') < 0) return rawSeat;
+  const parts = rawSeat.split('+').map(function(s) { return s.trim(); });
+  if (parts.length < 3) return rawSeat; // 2席は短縮しない
+  // 接頭辞（"R" など）と数字に分解
+  const prefixMatch = parts[0].match(/^([A-Za-zぁ-んァ-ヶ一-龯]*)(\d+)$/);
+  if (!prefixMatch) return rawSeat;
+  const prefix = prefixMatch[1];
+  const nums = [];
+  for (let i = 0; i < parts.length; i++) {
+    const m = parts[i].match(/^([A-Za-zぁ-んァ-ヶ一-龯]*)(\d+)$/);
+    if (!m || m[1] !== prefix) return rawSeat; // 接頭辞が不一致なら短縮しない
+    nums.push(parseInt(m[2], 10));
+  }
+  // 連続範囲を計算
+  nums.sort(function(a, b) { return a - b; });
+  let isConsecutive = true;
+  for (let i = 1; i < nums.length; i++) {
+    if (nums[i] !== nums[i-1] + 1) { isConsecutive = false; break; }
+  }
+  if (isConsecutive) {
+    return prefix + nums[0] + '〜' + nums[nums.length - 1];
+  }
+  return rawSeat;
 }
 
 // 予約カードの展開／折りたたみ
@@ -6170,7 +6207,7 @@ function renderReservationList() {
         : '<strong>' + seatDisplay + '</strong>';
       const seatMini = pending
         ? '<span class="ri-seat-mini" style="background:#fff3cd;color:#856404;">⚠席未</span>'
-        : '<span class="ri-seat-mini">席:' + r.seat + '</span>';
+        : '<span class="ri-seat-mini">' + compactSeat(r.seat) + '</span>';
       const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
 
       // コースの種別判定（1行ミニバッジ用）
@@ -6194,13 +6231,13 @@ function renderReservationList() {
         // 席のみ
         miniCourseHtml = '<span class="ri-course-mini seat-only">席のみ</span>';
       }
+      const nameWithMark = (sourceMark ? '<span title="' + sourceTitle + '" style="margin-right:3px">' + sourceMark + '</span>' : '') + r.name + '様';
       return ''
         + '<div class="reservation-item active" data-rid="' + r.id + '">'
         +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
-        +     (sourceMark ? '<span title="' + sourceTitle + '">' + sourceMark + '</span>' : '')
         +     '<span class="ri-time">' + r.time + '</span>'
         +     '<span class="ri-people">' + r.people + '名</span>'
-        +     '<span class="ri-name">' + r.name + '様</span>'
+        +     '<span class="ri-name">' + nameWithMark + '</span>'
         +     miniCourseHtml
         +     seatMini
         +     statusTag
@@ -6794,7 +6831,9 @@ function onResDateChange() {
     state.date = inp.value;
     // 日付が変わったら空き判定は無効化（時間スロットを再判定が必要）
     state.availabilityChecked = false;
-    // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+    // 自分自身のインラインカレンダーも再描画
+    updateDateInputAndCal('resDate', inp.value);
+    // 他タブの入力欄＋インラインカレンダーも一括同期
     updateDateInputAndCal('listDate', inp.value);
     updateDateInputAndCal('smDate',   inp.value);
     smState.date = inp.value;
@@ -6806,7 +6845,9 @@ function onSmDateChange() {
   const dateInp = document.getElementById('smDate');
   if (!dateInp || !dateInp.value) return;
   smState.date = dateInp.value;
-  // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+  // 自分自身のインラインカレンダーも再描画
+  updateDateInputAndCal('smDate', dateInp.value);
+  // 他タブの入力欄＋インラインカレンダーも一括同期
   updateDateInputAndCal('listDate', dateInp.value);
   updateDateInputAndCal('resDate',  dateInp.value);
   try { state.date = dateInp.value; } catch (e) {}
