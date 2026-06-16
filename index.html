@@ -740,6 +740,20 @@ button.secondary:active { background: var(--primary); color: white; }
   color: #b71c1c;
   border-color: #e57373;
 }
+/* シフト追加モーダルの選択日チップ */
+.shift-date-chip {
+  display: inline-block;
+  background: var(--primary);
+  color: white;
+  border: 1.5px solid var(--primary-dark);
+  padding: 3px 9px;
+  border-radius: 12px;
+  font-size: 12px; font-weight: 600;
+  cursor: pointer; user-select: none;
+}
+.shift-date-chip.sun { background: #c62828; border-color: #8e1010; }
+.shift-date-chip.sat { background: #1976d2; border-color: #0d47a1; }
+.shift-date-chip:active { transform: scale(0.95); }
 .hist-summary {
   margin-top: 8px; padding: 8px;
   background: var(--primary-light); border-radius: 6px;
@@ -2637,9 +2651,15 @@ function openStaffShiftModal() {
     : '<option value="">初回のみ読み込み中（数秒）...</option>';
 
   overlay.innerHTML =
-    '<div class="modal" style="max-width:440px">'
+    '<div class="modal" style="max-width:460px">'
     + '<h3>シフト追加 / 不可登録（' + getStoreLabel() + '）</h3>'
-    + '<div style="margin-bottom:10px;font-size:13px;color:var(--muted);">対象日：<strong style="color:var(--text)">' + date + '</strong></div>'
+    // 対象日（複数選択）
+    + '<div class="field" style="margin-bottom:8px">'
+    +   '<label>対象日（複数選択可）<span class="req">*</span></label>'
+    +   '<div id="shiftSelectedDates" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;min-height:28px;"></div>'
+    +   '<div id="shiftCalGrid" class="cal-grid-wrap" data-multi="1"></div>'
+    +   '<div class="hint">カレンダーの日付をタップで選択／解除（複数日OK）</div>'
+    + '</div>'
     // 種類トグル
     + '<div class="field" style="margin-bottom:8px">'
     +   '<label>種類</label>'
@@ -2668,6 +2688,92 @@ function openStaffShiftModal() {
     + '<button class="secondary" id="closeShiftBtn">キャンセル</button>'
     + '</div>';
   document.body.appendChild(overlay);
+
+  // ===== 複数日選択ロジック =====
+  const selectedDates = new Set([date]); // 初期は今日 or 座席表で開いていた日
+
+  function renderSelectedChips() {
+    const wrap = document.getElementById('shiftSelectedDates');
+    if (!wrap) return;
+    if (selectedDates.size === 0) {
+      wrap.innerHTML = '<span style="font-size:11px;color:var(--muted);">日付を1つ以上選んでください</span>';
+      return;
+    }
+    const wd = ['日','月','火','水','木','金','土'];
+    const sorted = Array.from(selectedDates).sort();
+    wrap.innerHTML = sorted.map(function(d) {
+      const dt = new Date(d + 'T00:00:00');
+      const dow = wd[dt.getDay()];
+      const label = (dt.getMonth()+1) + '/' + dt.getDate() + '（' + dow + '）';
+      const colorCls = dt.getDay() === 0 ? 'sun' : dt.getDay() === 6 ? 'sat' : '';
+      return '<span class="shift-date-chip ' + colorCls + '" data-date="' + d + '" title="クリックで解除">' + label + ' ✕</span>';
+    }).join('');
+    wrap.querySelectorAll('.shift-date-chip').forEach(function(c) {
+      c.addEventListener('click', function() {
+        selectedDates.delete(c.getAttribute('data-date'));
+        renderSelectedChips();
+        renderMultiCal();
+      });
+    });
+  }
+
+  function renderMultiCal() {
+    const container = document.getElementById('shiftCalGrid');
+    if (!container) return;
+    const todayD = new Date();
+    if (!container._calState) {
+      container._calState = { year: todayD.getFullYear(), month: todayD.getMonth() };
+    }
+    const state = container._calState;
+    const todayStrLocal = todayD.getFullYear() + '-' + String(todayD.getMonth()+1).padStart(2,'0') + '-' + String(todayD.getDate()).padStart(2,'0');
+    const firstDay = new Date(state.year, state.month, 1);
+    const startDow = firstDay.getDay();
+    const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
+    let html = '<div class="cal-header">'
+      + '<button type="button" class="cal-nav" data-nav="-1">‹</button>'
+      + '<span class="cal-title">' + state.year + '年 ' + (state.month + 1) + '月</span>'
+      + '<button type="button" class="cal-nav" data-nav="+1">›</button>'
+      + '</div>'
+      + '<div class="cal-grid">';
+    ['日','月','火','水','木','金','土'].forEach(function(d, i) {
+      const cls = i === 0 ? 'cal-dow sun' : i === 6 ? 'cal-dow sat' : 'cal-dow';
+      html += '<div class="' + cls + '">' + d + '</div>';
+    });
+    for (let i = 0; i < startDow; i++) html += '<div class="cal-day-blank"></div>';
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dateStr = state.year + '-' + String(state.month + 1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
+      const dow = new Date(state.year, state.month, d).getDay();
+      let cls = 'cal-day';
+      if (dateStr === todayStrLocal) cls += ' today';
+      if (selectedDates.has(dateStr)) cls += ' selected';
+      if (dow === 0) cls += ' sun';
+      if (dow === 6) cls += ' sat';
+      html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '">' + d + '</button>';
+    }
+    html += '</div>';
+    container.innerHTML = html;
+    container.querySelectorAll('.cal-nav').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const delta = parseInt(btn.getAttribute('data-nav'), 10);
+        state.month += delta;
+        if (state.month < 0) { state.month = 11; state.year--; }
+        if (state.month > 11) { state.month = 0; state.year++; }
+        renderMultiCal();
+      });
+    });
+    container.querySelectorAll('.cal-day').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const d = btn.getAttribute('data-date');
+        if (selectedDates.has(d)) selectedDates.delete(d);
+        else selectedDates.add(d);
+        renderSelectedChips();
+        renderMultiCal();
+      });
+    });
+  }
+
+  renderSelectedChips();
+  renderMultiCal();
 
   // 不可リスト（その日 ❌登録された人）
   let unavSet = {};
@@ -2734,66 +2840,86 @@ function openStaffShiftModal() {
   document.getElementById('saveShiftBtn').addEventListener('click', function() {
     const name = document.getElementById('shiftEmployee').value;
     if (!name) { alert('従業員を選択してください'); return; }
+    if (selectedDates.size === 0) { alert('対象日を1つ以上選んでください'); return; }
 
-    let title, startDate, endDate;
+    let titleBase, startTime;
     if (currentType === 'unav') {
-      // 不可登録：終日扱い（タイトル先頭に❌＋理由）
       const reason = (document.getElementById('unavReason').value || '').trim();
-      title = '❌' + name + (reason ? '（' + reason + '）' : '（終日不可）');
-      startDate = new Date(date + 'T00:00:00+09:00');
-      endDate = new Date(date + 'T00:00:00+09:00');
+      titleBase = '❌' + name + (reason ? '（' + reason + '）' : '（終日不可）');
     } else {
-      const startTime = document.getElementById('shiftStart').value;
+      startTime = document.getElementById('shiftStart').value;
       if (!startTime) { alert('開始時刻を選んでください'); return; }
-      const startStr = date + 'T' + startTime + ':00+09:00';
-      startDate = new Date(startStr);
-      endDate = new Date(startDate.getTime());
-      title = name;
+      titleBase = name;
     }
 
-    // 楽観的UI：① モーダル即閉じ ② キャッシュへ即追加 ③ レール即再描画 ④ 裏でGAS同期
-    const optimisticItem = {
-      id: 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
-      name: title,
-      start: startDate.toISOString(),
-      end: endDate.toISOString()
-    };
-    optimisticAddStaffShift(date, currentStore, optimisticItem);
+    // モーダル即閉じ
     overlay.remove();
-    try { renderStaffRail(); } catch (e) {}
-    updateSyncStatus(currentType === 'unav' ? '不可登録中...' : 'シフト登録中...', '#ef6c00');
-    logActivity(
-      currentType === 'unav' ? '❌ 出勤不可登録' : '👥 シフト登録',
-      title, date + ' ' + currentTime);
 
-    callWebhook({
-      action: 'createStaffShift',
-      store: currentStore,
-      name: title,
-      start: startDate.toISOString(),
-      end: endDate.toISOString()
-    }).then(function(resp) {
-      if (resp.ok) {
-        updateSyncStatus(currentType === 'unav' ? '✓ 不可登録OK' : '✓ シフト追加OK', '#2e7d32');
-        setTimeout(function() { updateSyncStatus(''); }, 2500);
-        // 重要：キャッシュは消さず、楽観追加のIDだけ本物のeventIdに置き換える
-        // → 連続追加時のレース防止（複数の fetch が楽観追加分を消すのを防ぐ）
-        if (resp.eventId) {
-          optimisticItem.id = resp.eventId;
-        }
+    const dates = Array.from(selectedDates).sort();
+    const total = dates.length;
+    updateSyncStatus(
+      (currentType === 'unav' ? '不可登録中' : 'シフト登録中') + '... (' + total + '件)',
+      '#ef6c00'
+    );
+
+    // 楽観追加 + GAS送信を1日ずつ順次
+    let ok = 0, ng = 0;
+    const promises = dates.map(function(d) {
+      let startDate, endDate;
+      if (currentType === 'unav') {
+        startDate = new Date(d + 'T00:00:00+09:00');
+        endDate = new Date(d + 'T00:00:00+09:00');
       } else {
-        // 失敗時はキャッシュから楽観追加分を取り除く
-        const key = _staffKey(date, currentStore);
-        if (_staffSchedCache[key]) {
-          _staffSchedCache[key].items = _staffSchedCache[key].items.filter(function(it) {
-            return it.id !== optimisticItem.id;
-          });
-        }
-        try { renderStaffRail(); } catch (e) {}
-        updateSyncStatus('⚠ 登録失敗', '#c62828');
-        setTimeout(function() { updateSyncStatus(''); }, 3500);
-        alert('登録に失敗しました: ' + (resp.error || ''));
+        startDate = new Date(d + 'T' + startTime + ':00+09:00');
+        endDate = new Date(startDate.getTime());
       }
+      const optimisticItem = {
+        id: 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+        name: titleBase,
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      };
+      optimisticAddStaffShift(d, currentStore, optimisticItem);
+      logActivity(
+        currentType === 'unav' ? '❌ 出勤不可登録' : '👥 シフト登録',
+        titleBase + ' / ' + d, (currentType === 'unav' ? '終日' : startTime));
+      return callWebhook({
+        action: 'createStaffShift',
+        store: currentStore,
+        name: titleBase,
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      }).then(function(resp) {
+        if (resp.ok) {
+          ok++;
+          if (resp.eventId) optimisticItem.id = resp.eventId;
+        } else {
+          ng++;
+          // 失敗時のロールバック
+          const key = _staffKey(d, currentStore);
+          if (_staffSchedCache[key]) {
+            _staffSchedCache[key].items = _staffSchedCache[key].items.filter(function(it) {
+              return it.id !== optimisticItem.id;
+            });
+          }
+        }
+      }).catch(function() { ng++; });
+    });
+
+    try { renderStaffRail(); } catch (e) {}
+
+    Promise.all(promises).then(function() {
+      try { renderStaffRail(); } catch (e) {}
+      if (ng === 0) {
+        updateSyncStatus('✓ ' + ok + '件 完了', '#2e7d32');
+      } else if (ok === 0) {
+        updateSyncStatus('⚠ 全' + ng + '件 失敗', '#c62828');
+        alert('全て登録に失敗しました');
+      } else {
+        updateSyncStatus('⚠ ' + ok + '件成功 / ' + ng + '件失敗', '#ef6c00');
+        alert(ok + '件登録、' + ng + '件失敗しました');
+      }
+      setTimeout(function() { updateSyncStatus(''); }, 4000);
     });
   });
 }
@@ -6479,9 +6605,9 @@ function renderCalendarGrid(container, animDirection) {
   }
 }
 
-// 全カレンダーを初期化／再描画
+// 全カレンダーを初期化／再描画（複数選択モードは除外）
 function initAllCalendars() {
-  document.querySelectorAll('.cal-grid-wrap').forEach(function(c) {
+  document.querySelectorAll('.cal-grid-wrap:not([data-multi="1"])').forEach(function(c) {
     renderCalendarGrid(c);
   });
 }
