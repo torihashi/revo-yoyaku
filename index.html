@@ -493,7 +493,8 @@ button.secondary:active { background: var(--primary); color: white; }
   position: relative; user-select: none; text-align: center; line-height: 1.1;
   font-size: 14px;
 }
-.revo-seat-layout .seat .seat-cap { font-size: 9px; font-weight: 500; opacity: 0.7; }
+.revo-seat-layout .seat .seat-cap { display: none; }
+.seat-layout .seat .seat-cap { display: none; }
 /* 席が割り当てられた瞬間の強調アニメ（「変わった」感を出す） */
 @keyframes seat-just-assigned {
   0%   { transform: scale(1);    box-shadow: 0 0 0 0 rgba(46, 125, 50, 0.9); }
@@ -717,20 +718,27 @@ button.secondary:active { background: var(--primary); color: white; }
   padding: 4px 0;
 }
 .hist-chip {
-  background: var(--primary-light);
-  color: var(--primary-dark);
-  border: 1px solid var(--border);
+  /* 過去（実績）= 青基調 */
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
   padding: 4px 8px;
   border-radius: 14px;
   font-size: 12px; font-weight: 600;
 }
-.hist-chip.sun { background: #ffebee; color: #c62828; border-color: #ffcdd2; }
-.hist-chip.sat { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
-/* 未来の予定（実打刻なし）— 点線枠で控えめに */
+/* 過去の土日（実績）— 過去はすべて青系で統一しつつ、土日のみ濃淡で差をつける */
+.hist-chip.sun { background: #d1e9ff; color: #0d47a1; border-color: #90caf9; }
+.hist-chip.sat { background: #d1e9ff; color: #0d47a1; border-color: #90caf9; }
+/* 未来の予定（実打刻なし）= 赤基調 */
 .hist-chip.future {
-  background: #fff8e1;
-  color: #e65100;
-  border: 1px dashed #ffb74d;
+  background: #ffebee;
+  color: #c62828;
+  border: 1px dashed #ef9a9a;
+}
+.hist-chip.future.sun, .hist-chip.future.sat {
+  background: #ffcdd2;
+  color: #b71c1c;
+  border-color: #e57373;
 }
 .hist-summary {
   margin-top: 8px; padding: 8px;
@@ -2389,16 +2397,16 @@ function renderStaffHistoryDetail() {
         totalMin += it.totalMinutes || 0;
         actualDays++;
       }
-      const tag = isPlanned ? '<span style="background:#fff8e1;color:#e65100;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">予定</span>' : '';
-      html += '<div class="hist-day-row"' + (isPlanned ? ' style="border-left:3px solid #ffb74d;padding-left:5px;"' : '') + '>'
+      const tag = isPlanned ? '<span style="background:#ffebee;color:#c62828;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">予定</span>' : '';
+      html += '<div class="hist-day-row"' + (isPlanned ? ' style="border-left:3px solid #ef5350;padding-left:5px;"' : '') + '>'
         + '<span class="hist-day-date">' + dateLabel + tag + '</span>'
         + '<span class="hist-day-segs">' + segsLabel + '</span>'
         + '<span class="hist-day-total">' + fmtH(it.totalMinutes || 0) + '</span>'
         + '</div>';
     });
-    html += '<div class="hist-summary"><span>実績</span><span>' + actualDays + '日 / ' + fmtH(totalMin) + '</span></div>';
+    html += '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実績（過去）</span><span>' + actualDays + '日 / ' + fmtH(totalMin) + '</span></div>';
     if (plannedDays > 0) {
-      html += '<div class="hist-summary" style="background:#fff8e1;color:#e65100;"><span>予定</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + '</span></div>';
+      html += '<div class="hist-summary" style="background:#ffebee;color:#c62828;"><span>予定（未来）</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + '</span></div>';
     }
     content.innerHTML = html;
   });
