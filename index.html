@@ -726,6 +726,12 @@ button.secondary:active { background: var(--primary); color: white; }
 }
 .hist-chip.sun { background: #ffebee; color: #c62828; border-color: #ffcdd2; }
 .hist-chip.sat { background: #e3f2fd; color: #1565c0; border-color: #bbdefb; }
+/* 未来の予定（実打刻なし）— 点線枠で控えめに */
+.hist-chip.future {
+  background: #fff8e1;
+  color: #e65100;
+  border: 1px dashed #ffb74d;
+}
 .hist-summary {
   margin-top: 8px; padding: 8px;
   background: var(--primary-light); border-radius: 6px;
@@ -2318,16 +2324,22 @@ function renderStaffHistoryChips() {
       return;
     }
     const wd = ['日','月','火','水','木','金','土'];
+    const today = new Date(); today.setHours(0,0,0,0);
+    let pastCount = 0, futureCount = 0;
     const chips = data.items.map(function(it) {
-      const d = new Date(it.date);
+      const d = new Date(it.date + 'T00:00:00');
       const dayOfWeek = wd[d.getDay()];
-      const cls = d.getDay() === 0 ? 'hist-chip sun'
-                : d.getDay() === 6 ? 'hist-chip sat'
-                : 'hist-chip';
-      return '<span class="' + cls + '">' + String(d.getMonth() + 1) + '/' + String(d.getDate()) + '（' + dayOfWeek + '）</span>';
+      const isFuture = d.getTime() >= today.getTime();
+      if (isFuture) futureCount++; else pastCount++;
+      let cls = 'hist-chip';
+      if (d.getDay() === 0) cls += ' sun';
+      if (d.getDay() === 6) cls += ' sat';
+      if (isFuture) cls += ' future';
+      const planTag = isFuture ? '<span style="font-size:9px;margin-left:3px;opacity:0.8;">予定</span>' : '';
+      return '<span class="' + cls + '">' + String(d.getMonth() + 1) + '/' + String(d.getDate()) + '（' + dayOfWeek + '）' + planTag + '</span>';
     }).join('');
     content.innerHTML = '<div class="hist-chips">' + chips + '</div>'
-      + '<div class="hist-summary"><span>出勤日数</span><span>' + data.items.length + '日</span></div>';
+      + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>';
   });
 }
 
@@ -2355,10 +2367,14 @@ function renderStaffHistoryDetail() {
       const m = min % 60;
       return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
     };
-    let totalMin = 0;
+    const today = new Date(); today.setHours(0,0,0,0);
+    let totalMin = 0, plannedMin = 0;
+    let actualDays = 0, plannedDays = 0;
     let html = '';
     data.items.forEach(function(it) {
-      const d = new Date(it.date);
+      const d = new Date(it.date + 'T00:00:00');
+      const isFuture = d.getTime() >= today.getTime();
+      const isPlanned = it.source === 'calendar' || isFuture;
       const dateLabel = String(d.getMonth() + 1) + '/' + String(d.getDate()) + '（' + wd[d.getDay()] + '）';
       const segsLabel = it.segments.map(function(seg) {
         if (seg.start && seg.end) return seg.start + '-' + seg.end;
@@ -2366,14 +2382,24 @@ function renderStaffHistoryDetail() {
         if (seg.end) return '?-' + seg.end;
         return '';
       }).filter(Boolean).join(' / ');
-      totalMin += it.totalMinutes || 0;
-      html += '<div class="hist-day-row">'
-        + '<span class="hist-day-date">' + dateLabel + '</span>'
+      if (isPlanned) {
+        plannedMin += it.totalMinutes || 0;
+        plannedDays++;
+      } else {
+        totalMin += it.totalMinutes || 0;
+        actualDays++;
+      }
+      const tag = isPlanned ? '<span style="background:#fff8e1;color:#e65100;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">予定</span>' : '';
+      html += '<div class="hist-day-row"' + (isPlanned ? ' style="border-left:3px solid #ffb74d;padding-left:5px;"' : '') + '>'
+        + '<span class="hist-day-date">' + dateLabel + tag + '</span>'
         + '<span class="hist-day-segs">' + segsLabel + '</span>'
         + '<span class="hist-day-total">' + fmtH(it.totalMinutes || 0) + '</span>'
         + '</div>';
     });
-    html += '<div class="hist-summary"><span>合計</span><span>' + data.items.length + '日 / ' + fmtH(totalMin) + '</span></div>';
+    html += '<div class="hist-summary"><span>実績</span><span>' + actualDays + '日 / ' + fmtH(totalMin) + '</span></div>';
+    if (plannedDays > 0) {
+      html += '<div class="hist-summary" style="background:#fff8e1;color:#e65100;"><span>予定</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + '</span></div>';
+    }
     content.innerHTML = html;
   });
 }
