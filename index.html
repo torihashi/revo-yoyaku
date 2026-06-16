@@ -5769,11 +5769,12 @@ function closeTakeoutAndShowSeatmap() {
 // 一覧の日付変更時：座席表側も同期
 function onListDateChange() {
   const listDate = document.getElementById('listDate');
-  const smDate = document.getElementById('smDate');
-  if (listDate && smDate) {
-    smDate.value = listDate.value;
-    smState.date = listDate.value;
-  }
+  if (!listDate || !listDate.value) return;
+  // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+  updateDateInputAndCal('smDate',  listDate.value);
+  updateDateInputAndCal('resDate', listDate.value);
+  smState.date = listDate.value;
+  try { state.date = listDate.value; } catch (e) {}
   renderReservationList();
 }
 
@@ -5924,12 +5925,18 @@ function initSeatMap() {
     smState.date = dateInp ? dateInp.value : todayStr();
     smState.initialized = true;
   } else {
-    // 2回目以降：一覧側で変えた日付を反映
+    // 2回目以降：他タブ（一覧 or 新規予約）で変えた日付を反映
     const listDate = document.getElementById('listDate');
-    const dateInp = document.getElementById('smDate');
-    if (listDate && listDate.value && dateInp) {
-      dateInp.value = listDate.value;
-      smState.date = listDate.value;
+    const resDate  = document.getElementById('resDate');
+    // 優先順位: 一覧の日付 → 新規予約の state.date → 既存 smState.date
+    const preferred = (listDate && listDate.value)
+                   || (state && state.date)
+                   || (resDate && resDate.value)
+                   || smState.date;
+    if (preferred) {
+      smState.date = preferred;
+      // 入力欄＋インラインカレンダーの両方を更新（緑マークがずれるバグ防止）
+      updateDateInputAndCal('smDate', preferred);
     }
   }
   renderSeatMap();
@@ -6248,6 +6255,36 @@ function handleSeatClick(seatId) {
   autoAdvanceFromSeatMap();
 }
 
+// 日付入力欄＆対応するインラインカレンダーを一括更新するヘルパー
+// （タブ切替時に「緑マーク」が古い日付に残るバグを防ぐ）
+function updateDateInputAndCal(inputId, dateStr) {
+  if (!dateStr) return;
+  const inp = document.getElementById(inputId);
+  if (inp && inp.value !== dateStr) inp.value = dateStr;
+  // data-target が一致するすべての .cal-grid-wrap を再描画
+  document.querySelectorAll('.cal-grid-wrap[data-target="' + inputId + '"]').forEach(function(c) {
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+      const y = parseInt(parts[0], 10);
+      const m = parseInt(parts[1], 10) - 1;
+      if (c._calState) { c._calState.year = y; c._calState.month = m; }
+      else { c._calState = { year: y, month: m }; }
+    }
+    try { renderCalendarGrid(c); } catch (e) {}
+  });
+}
+
+// 全タブの日付入力＋カレンダーを一括同期
+function syncDateAcrossTabs(dateStr) {
+  if (!dateStr) return;
+  updateDateInputAndCal('resDate', dateStr);
+  updateDateInputAndCal('listDate', dateStr);
+  updateDateInputAndCal('smDate', dateStr);
+  // 各種 state も同期
+  try { state.date = dateStr; } catch (e) {}
+  try { smState.date = dateStr; } catch (e) {}
+}
+
 // インラインカレンダーグリッド：タップで即日付選択
 function renderCalendarGrid(container, animDirection) {
   if (!container) return;
@@ -6402,17 +6439,22 @@ function onResDateChange() {
     state.date = inp.value;
     // 日付が変わったら空き判定は無効化（時間スロットを再判定が必要）
     state.availabilityChecked = false;
+    // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+    updateDateInputAndCal('listDate', inp.value);
+    updateDateInputAndCal('smDate',   inp.value);
+    smState.date = inp.value;
   }
 }
 
 // 座席表の日付変更ハンドラ（quick-date から呼ばれる）
 function onSmDateChange() {
   const dateInp = document.getElementById('smDate');
-  if (!dateInp) return;
+  if (!dateInp || !dateInp.value) return;
   smState.date = dateInp.value;
-  // 一覧側の日付も連動
-  const listDate = document.getElementById('listDate');
-  if (listDate) listDate.value = dateInp.value;
+  // 他タブの入力欄＋インラインカレンダーも一括同期（緑マークも追従）
+  updateDateInputAndCal('listDate', dateInp.value);
+  updateDateInputAndCal('resDate',  dateInp.value);
+  try { state.date = dateInp.value; } catch (e) {}
   if (typeof renderSeatMap === 'function') renderSeatMap();
 }
 
