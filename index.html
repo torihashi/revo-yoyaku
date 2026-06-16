@@ -3589,6 +3589,13 @@ function loadReservations() {
 reservations = loadReservations();
 
 let _saveTimer = null;
+// 予約データに変更があった時、一覧と座席表の両方を即時再描画する
+// （リアルタイム同期：片方しか更新されないバグの予防）
+function refreshAllReservationViews() {
+  try { if (typeof renderReservationList === 'function') renderReservationList(); } catch (e) {}
+  try { if (typeof renderSeatMap === 'function')         renderSeatMap(); } catch (e) {}
+}
+
 function saveReservations() {
   // 200msデバウンス：連続操作時の I/O 削減
   if (_saveTimer) clearTimeout(_saveTimer);
@@ -3596,6 +3603,8 @@ function saveReservations() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations)); } catch (e) {}
     _saveTimer = null;
   }, 200);
+  // ★ データに変更があったので、一覧と座席表の両方を即時再描画（リアルタイム同期）
+  refreshAllReservationViews();
 }
 // アプリ離脱時は確実に保存
 window.addEventListener('beforeunload', function() {
@@ -3862,6 +3871,19 @@ function switchTab(name) {
     initSeatMap();
     // 座席表表示時にログ一覧も自動更新
     try { fetchAndRenderActivityLog(); } catch (e) {}
+  }
+  // ★ 一覧 or 座席表へ切替時、最近の同期から30秒以上経っていればバックグラウンド同期して両ビューを更新
+  if ((name === 'list' || name === 'seatmap') && isWebhookConfigured()) {
+    let lastSync = 0;
+    try { lastSync = new Date(localStorage.getItem('lastSyncTime')).getTime() || 0; } catch (e) {}
+    if (Date.now() - lastSync > 30 * 1000) {
+      syncFromWebhook(function(ok) {
+        if (ok) {
+          try { localStorage.setItem('lastSyncTime', new Date().toISOString()); } catch (e) {}
+          refreshAllReservationViews();
+        }
+      });
+    }
   }
 }
 
