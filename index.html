@@ -1722,16 +1722,18 @@ const COMBINATIONS = [
   { id:'P-03', area:'奥座敷', tables:'3+4', min:5, max:8, note:'結合' },
   { id:'P-04', area:'奥座敷', tables:'5+6', min:5, max:8, note:'結合' },
   { id:'P-05', area:'奥座敷', tables:'1+2+3+4', min:9, max:16, note:'2列結合' },
-  { id:'P-06', area:'奥座敷', tables:'1+2+3+4+5+6', min:17, max:24, note:'全卓結合・最大' },
+  { id:'P-06', area:'奥座敷', tables:'1+2+3+4+5+6', min:11, max:24, note:'全卓結合（11名以上で活用）' },
   { id:'P-07', area:'小上がり', tables:'9', min:2, max:5, note:'通常使用' },
   { id:'P-08', area:'小上がり', tables:'10', min:2, max:4, note:'通常使用' },
   { id:'P-09', area:'小上がり', tables:'9+10', min:6, max:10, note:'結合' },
   { id:'P-10', area:'カウンター', tables:'11〜18', min:1, max:8, note:'1〜3名向け' },
   { id:'P-11', area:'増築エリア', tables:'31', min:2, max:10, note:'個室テーブル' },
-  { id:'P-12', area:'増築エリア', tables:'32', min:4, max:11, note:'大テーブル' },
+  { id:'P-12', area:'増築エリア', tables:'32', min:4, max:12, note:'大テーブル（詰めて12名）' },
+  { id:'P-13', area:'増築エリア', tables:'31+32', min:8, max:18, note:'31+32結合' },
+  { id:'P-14', area:'増築エリア', tables:'いろり+33+34', min:11, max:20, note:'いろり卓3結合' },
   { id:'P-15', area:'増築エリア', tables:'33+34', min:6, max:10, note:'結合・詰めて10名' },
   { id:'P-16', area:'増築エリア', tables:'いろり', min:3, max:8, note:'囲炉裏卓' },
-  { id:'P-17', area:'増築エリア貸切', tables:'いろり+31+32+33+34', min:20, max:35, note:'貸切最大35名' },
+  { id:'P-17', area:'増築エリア貸切', tables:'いろり+31+32+33+34', min:15, max:35, note:'貸切最大35名（15名以上で活用）' },
 ];
 
 const COURSES = [
@@ -4250,12 +4252,13 @@ function checkAvailability() {
 
   const sel = document.getElementById('slotGrid');
   // 「未選択」エントリ＋全時刻オプション
+  // 候補席が無い時間帯も「選択可」にして、ユーザーが手動で席指定できるようにする
   let html = '<option value="">▼ 時刻を選んでください</option>';
   TIME_SLOTS.forEach(function(t) {
     const slot = computeSlotAvailability(date, t, people, dayRes);
     const label = t + ' ' + slot.label;
-    const disabled = slot.cls === 'full' ? ' disabled' : '';
-    html += '<option value="' + t + '" data-cls="' + slot.cls + '"' + disabled + '>' + label + '</option>';
+    // ✗（満）でも disabled にしない → ユーザーが選択して手動席指定 or 確認可能に
+    html += '<option value="' + t + '" data-cls="' + slot.cls + '">' + label + '</option>';
   });
   sel.innerHTML = html;
   sel.addEventListener('change', function() {
