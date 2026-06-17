@@ -1319,7 +1319,7 @@ select.time-select option:disabled { color: #aaa; }
     <label>ご人数<span class="req">*</span></label>
     <div class="stepper">
       <button type="button" id="numMinus" aria-label="人数マイナス">−</button>
-      <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" />
+      <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" onchange="onResPeopleChange()" oninput="onResPeopleChange()" />
       <button type="button" id="numPlus" aria-label="人数プラス">＋</button>
     </div>
     <div class="hint">合計人数（お子様含む）</div>
@@ -1592,17 +1592,25 @@ select.time-select option:disabled { color: #aaa; }
       </div>
     </div>
 
-    <!-- 個別シフト一覧（公開・日付チップのみ） -->
+    <!-- 個別シフト一覧（氏名+PIN認証で詳細表示） -->
     <div class="staff-history-section">
       <div class="staff-history-header">📅 各バイトシフト一覧</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">
+        ご本人の氏名＋PIN(6桁)で個別シフト詳細を確認できます
+      </div>
       <div class="staff-history-controls">
         <select id="staffHistoryChipName" style="flex:2"><option value="">▼ 従業員を選択</option></select>
+        <input type="tel" id="staffHistoryChipPin" maxlength="6" pattern="[0-9]*" inputmode="numeric"
+               placeholder="PIN" style="width:80px;letter-spacing:0.2em;text-align:center;font-weight:700;padding:6px 8px;border:1.5px solid var(--border);border-radius:6px;font-size:14px;" />
+        <button type="button" id="staffHistoryChipShow" onclick="onStaffHistoryChipShow()" style="padding:6px 10px;background:var(--primary);color:white;border:none;border-radius:6px;font-weight:600;cursor:pointer;font-family:inherit;font-size:12px;">表示</button>
+      </div>
+      <div class="staff-history-controls" style="margin-top:6px;">
         <button type="button" class="hist-nav" onclick="changeStaffHistoryChipMonth(-1)">‹</button>
         <span id="staffHistoryChipMonth" class="hist-month"></span>
         <button type="button" class="hist-nav" onclick="changeStaffHistoryChipMonth(1)">›</button>
       </div>
       <div id="staffHistoryChipContent">
-        <div class="staff-empty">従業員を選択してください</div>
+        <div class="staff-empty">氏名を選び PIN を入力して「表示」をタップ</div>
       </div>
     </div>
 
@@ -2382,6 +2390,14 @@ function populateStaffHistoryDropdown(selId, state, renderFn) {
     sel._bound = true;
     sel.addEventListener('change', function() {
       state.name = sel.value;
+      // チップ用ドロップダウンの場合は PIN認証もリセット（別人を選んだら再認証要求）
+      if (selId === 'staffHistoryChipName') {
+        const pinInp = document.getElementById('staffHistoryChipPin');
+        if (pinInp) pinInp.value = '';
+        const content = document.getElementById('staffHistoryChipContent');
+        if (content) content.innerHTML = '<div class="staff-empty">PINを入力して「表示」をタップしてください</div>';
+        return;
+      }
       renderFn();
     });
   }
@@ -2430,12 +2446,57 @@ function _fetchStaffMonthDays(state, callback) {
   });
 }
 
-// 公開：チップ表示（日付のみ）
+// PIN 認証済みフラグ（氏名ごとに記録）
+const _staffPinVerified = {};
+
+// 「表示」ボタン：氏名+PIN を検証してから詳細表示
+function onStaffHistoryChipShow() {
+  const sel = document.getElementById('staffHistoryChipName');
+  const pinInp = document.getElementById('staffHistoryChipPin');
+  const content = document.getElementById('staffHistoryChipContent');
+  const name = sel ? sel.value.trim() : '';
+  const pin = pinInp ? pinInp.value.replace(/[^0-9]/g, '') : '';
+  if (!name) { alert('氏名を選択してください'); return; }
+  if (!pin || pin.length < 4) { alert('PIN（4〜6桁）を入力してください'); return; }
+  if (!isWebhookConfigured()) {
+    content.innerHTML = '<div class="staff-empty">Webhook未設定</div>';
+    return;
+  }
+  content.innerHTML = '<div class="staff-empty">PINを確認中...</div>';
+  const url = WEBHOOK_URL
+    + '?action=verifyStaffPin'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&name=' + encodeURIComponent(name)
+    + '&pin=' + encodeURIComponent(pin);
+  fetch(url).then(function(r) { return r.json(); }).then(function(resp) {
+    if (!resp || !resp.ok) {
+      const e = (resp && resp.error) || '不明';
+      const msg = e === 'wrong pin'    ? '⚠ PINが違います'
+                : e === 'pin not set'  ? '⚠ このアカウントのPINは未設定'
+                : e === 'notfound'     ? '⚠ 氏名が見つかりません'
+                : '⚠ エラー：' + e;
+      content.innerHTML = '<div class="staff-empty" style="color:#c62828;">' + msg + '</div>';
+      return;
+    }
+    // 認証成功 → 状態を記録して詳細表示
+    _staffHistoryChipState.name = name;
+    _staffPinVerified[name] = true;
+    renderStaffHistoryChips();
+  }).catch(function(err) {
+    content.innerHTML = '<div class="staff-empty">通信エラー：' + String(err) + '</div>';
+  });
+}
+
+// チップ＋詳細表示（PIN認証済みの場合のみ）
 function renderStaffHistoryChips() {
   const content = document.getElementById('staffHistoryChipContent');
   if (!content) return;
   if (!_staffHistoryChipState.name) {
-    content.innerHTML = '<div class="staff-empty">従業員を選択してください</div>';
+    content.innerHTML = '<div class="staff-empty">氏名を選び PIN を入力して「表示」をタップ</div>';
+    return;
+  }
+  if (!_staffPinVerified[_staffHistoryChipState.name]) {
+    content.innerHTML = '<div class="staff-empty">PINを入力して「表示」をタップしてください</div>';
     return;
   }
   content.innerHTML = '<div class="staff-empty">取得中...</div>';
@@ -2451,11 +2512,13 @@ function renderStaffHistoryChips() {
     const wd = ['日','月','火','水','木','金','土'];
     const today = new Date(); today.setHours(0,0,0,0);
     let pastCount = 0, futureCount = 0;
+    let totalMin = 0;
     const chips = data.items.map(function(it) {
       const d = new Date(it.date + 'T00:00:00');
       const dayOfWeek = wd[d.getDay()];
       const isFuture = d.getTime() >= today.getTime();
       if (isFuture) futureCount++; else pastCount++;
+      if (!isFuture) totalMin += it.totalMinutes || 0;
       let cls = 'hist-chip';
       if (d.getDay() === 0) cls += ' sun';
       if (d.getDay() === 6) cls += ' sat';
@@ -2463,8 +2526,36 @@ function renderStaffHistoryChips() {
       const planTag = isFuture ? '<span style="font-size:9px;margin-left:3px;opacity:0.8;">予定</span>' : '';
       return '<span class="' + cls + '">' + String(d.getMonth() + 1) + '/' + String(d.getDate()) + '（' + dayOfWeek + '）' + planTag + '</span>';
     }).join('');
+
+    // 詳細セグメント表示（時間・実動）
+    const fmtH = function(min) {
+      const h = Math.floor(min / 60);
+      const m = min % 60;
+      return h + 'h' + (m > 0 ? ' ' + m + 'm' : '');
+    };
+    const details = data.items.map(function(it) {
+      const d = new Date(it.date + 'T00:00:00');
+      const isFuture = d.getTime() >= today.getTime();
+      const dateLabel = (d.getMonth() + 1) + '/' + d.getDate() + '（' + wd[d.getDay()] + '）';
+      const segsLabel = (it.segments || []).map(function(seg) {
+        if (seg.start && seg.end) return seg.start + '-' + seg.end;
+        if (seg.start) return seg.start + '〜';
+        if (seg.end) return '?-' + seg.end;
+        return '';
+      }).filter(Boolean).join(' / ');
+      const tag = isFuture ? '<span style="background:#ffebee;color:#c62828;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">予定</span>' : '';
+      return '<div class="hist-day-row"' + (isFuture ? ' style="border-left:3px solid #ef5350;padding-left:5px;"' : '') + '>'
+        + '<span class="hist-day-date">' + dateLabel + tag + '</span>'
+        + '<span class="hist-day-segs">' + segsLabel + '</span>'
+        + '<span class="hist-day-total">' + fmtH(it.totalMinutes || 0) + '</span>'
+        + '</div>';
+    }).join('');
+
     content.innerHTML = '<div class="hist-chips">' + chips + '</div>'
-      + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>';
+      + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>'
+      + '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実動時間（実績）</span><span>' + fmtH(totalMin) + '</span></div>'
+      + '<div style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:600;">📋 日別詳細</div>'
+      + details;
   });
 }
 
@@ -3190,26 +3281,16 @@ function renderStaffRail() {
     entries.sort(function(a, b) { return (a.startTimeForSort || '').localeCompare(b.startTimeForSort || ''); });
 
     // 通常シフト＋タイムカード表示
+    // 仕様：開始時刻だけ表示。実動時間（退勤時刻・セグメント詳細）は非表示
     let html = entries.map(function(e) {
-      let timeLabel = '';
-      let hasActual = false;
-      if (e.segments && e.segments.length > 0) {
-        timeLabel = e.segments.map(function(seg) {
-          if (seg.start && seg.end) return seg.start + '-' + seg.end;
-          if (seg.start) return seg.start + '〜（勤務中）';
-          if (seg.end) return '?-' + seg.end;
-          return '';
-        }).filter(Boolean).join(' / ');
-        hasActual = true;
-      } else if (e.actualStart) {
-        timeLabel = e.actualStart + (e.actualEnd ? '〜' + e.actualEnd : '〜（勤務中）');
-        hasActual = true;
-      } else if (e.plannedStart) {
-        timeLabel = e.plannedStart + '〜';
-      }
+      // 実打刻があれば実打刻の開始時刻、無ければ予定の開始時刻
+      const startOnly = e.actualStart || e.plannedStart || '';
+      const hasActual = !!(e.actualStart || (e.segments && e.segments.length > 0));
+      // 実打刻ありなら ✓ マークだけ表示（出勤確定）
+      const actualMark = hasActual ? ' <span style="color:#2e7d32;font-size:11px">✓出勤</span>' : '';
       return '<div class="staff-item' + (hasActual ? ' staff-actual' : '') + '">'
-           +   '<span class="staff-time">' + timeLabel + '</span>'
-           +   '<span class="staff-name">' + e.name + '</span>'
+           +   '<span class="staff-time">' + (startOnly ? startOnly + '〜' : '') + '</span>'
+           +   '<span class="staff-name">' + e.name + actualMark + '</span>'
            + '</div>';
     }).join('');
 
@@ -4398,6 +4479,14 @@ function findSeatCandidates(people, date, time) {
 }
 
 function proceedToStep2() {
+  // 🛡 安全弁：Step1 の人数入力欄の最新値を必ず state にも反映
+  const peopleInp = document.getElementById('resPeople');
+  if (peopleInp && peopleInp.value) {
+    const v = parseInt(peopleInp.value);
+    if (!isNaN(v) && v >= 1 && v !== state.people) {
+      state.people = v;
+    }
+  }
   document.getElementById('step1').classList.add('hidden');
   document.getElementById('step2').classList.remove('hidden');
   document.getElementById('step3').classList.add('hidden');
@@ -6910,6 +6999,26 @@ function initAllCalendars() {
   document.querySelectorAll('.cal-grid-wrap:not([data-multi="1"])').forEach(function(c) {
     renderCalendarGrid(c);
   });
+}
+
+// 新規予約の人数入力欄が変わったら即座に state.people を更新
+// （バグ防止：空き確認後に人数だけ変えてもステップ2へ正しく反映）
+function onResPeopleChange() {
+  const inp = document.getElementById('resPeople');
+  if (!inp) return;
+  const v = parseInt(inp.value);
+  if (!isNaN(v) && v >= 1 && v <= 80) {
+    if (state.people !== v) {
+      state.people = v;
+      // 既に空き判定済みなら、人数が変わったので無効化
+      state.availabilityChecked = false;
+      // ステップ2側の表示も同期（移動後の食い違いを防ぐ）
+      const inp2 = document.getElementById('step2People');
+      const lbl2 = document.getElementById('step2PeopleLabel');
+      if (inp2) inp2.value = v;
+      if (lbl2) lbl2.textContent = v + '名';
+    }
+  }
 }
 
 // 新規予約の日付変更時に呼ばれる
