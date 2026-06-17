@@ -4831,10 +4831,30 @@ function isPendingSeat(rawSeat) {
   if (rawSeat === '未設定' || rawSeat === '当日決定' || rawSeat === '自動') return true;
   if (YAHOO_SEAT_MAP[rawSeat] && YAHOO_SEAT_MAP[rawSeat].pending) return true;
   // GAS統合版でマッピング済みの表示ラベルもカバー
-  // Yahoo!リザベ：「ご予約1(2〜4名)」「ご予約4(5〜8名)」など
   if (/^ご予約\s*\d/.test(rawSeat)) return true;
-  // AutoReserve / ぐるなび：「カウンター(要席指定)」「テーブル(要席指定)」「奥座敷(要席指定)」「個室(要席指定)」等
+  // AutoReserve / ぐるなび：「○○(要席指定)」
   if (/要席指定/.test(rawSeat)) return true;
+  // 「お任せ」「おまかせ」「指定なし」「未指定」「店舗判断」など
+  if (/^(お任せ|おまかせ|指定なし|未指定|なし|空欄|空|お?店任せ|店舗判断|どこでも|自動割振)$/.test(rawSeat)) return true;
+  // Yahoo!リザベ生の '指定なし' '人数で割振り' 等のフリーテキスト
+  if (rawSeat.indexOf('指定') >= 0 && rawSeat.indexOf('なし') >= 0) return true;
+  if (rawSeat.indexOf('人数') >= 0 && rawSeat.indexOf('割振') >= 0) return true;
+  return false;
+}
+
+// 卓番号が「鳥はし or リボ で認識される実席か」を判定
+function isKnownTable(t) {
+  if (!t) return false;
+  t = String(t).trim();
+  if (!t) return false;
+  // 鳥はし席（1-34、いろり、9-10など）
+  if (typeof SEAT_MASTER !== 'undefined') {
+    if (SEAT_MASTER.some(function(s) { return s.id === t; })) return true;
+  }
+  // リボ席（R1-R24、R11-R18）
+  if (typeof REVO_SEAT_MASTER !== 'undefined') {
+    if (REVO_SEAT_MASTER.some(function(s) { return s.id === t; })) return true;
+  }
   return false;
 }
 
@@ -6586,9 +6606,22 @@ function renderUnassignedRail(dayRes) {
   // 既存ラベル以外を消す
   rail.querySelectorAll('.un-slot').forEach(function(s) { s.remove(); });
 
-  // 要席指定の予約（Yahoo!のご予約1〜4や seat='当日決定' や seat=''）を抽出
+  // 要席指定の予約（Yahoo!のご予約1〜4や seat='当日決定' や seat='' に加え、
+  // 取込元(Yahoo/AutoReserve/ぐるなび)で席が実卓として認識できないもの全般）を抽出
   const unassigned = dayRes.filter(function(r) {
-    return isPendingSeat(r.seat) || r.seat === '当日決定' || !r.seat;
+    if (!r.seat) return true;
+    if (isPendingSeat(r.seat)) return true;
+    if (r.seat === '当日決定') return true;
+    // 取込予約（Yahoo/AutoReserve/ぐるなび）で席が実卓として認識できないもの
+    const isImported = r.source === 'yahoo' || r.source === 'autoreserve' || r.source === 'gnavi';
+    if (isImported) {
+      const tokens = expandSeat(r.seat);
+      // トークンが空、または全て未認識ならば未設定扱い
+      if (tokens.length === 0) return true;
+      const anyKnown = tokens.some(isKnownTable);
+      if (!anyKnown) return true;
+    }
+    return false;
   }).sort(function(a, b) { return a.time.localeCompare(b.time); });
 
   // 最大8枠を表示。空枠も用意してドロップ可能に
