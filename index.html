@@ -1592,6 +1592,18 @@ select.time-select option:disabled { color: #aaa; }
       </div>
     </div>
 
+  </div>
+</section>
+
+<!-- ============================================ -->
+<!-- TAB: バイト管理 -->
+<!-- ============================================ -->
+<section id="tab-staff" class="hidden">
+  <div class="card">
+    <h2>👥 バイト管理</h2>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">シフト追加・各バイトシフト一覧・月間労働集計</div>
+    <button class="primary" style="margin-top:0;margin-bottom:10px;" onclick="openStaffShiftModal()">＋ シフト追加（複数日対応）</button>
+
     <!-- 個別シフト一覧（氏名+PIN認証で詳細表示） -->
     <div class="staff-history-section">
       <div class="staff-history-header">📅 各バイトシフト一覧</div>
@@ -1650,20 +1662,6 @@ select.time-select option:disabled { color: #aaa; }
       </div>
     </div>
   </div>
-
-  <!-- アクティビティログ（座席表内・全員閲覧可） -->
-  <div class="card" id="activityLogCard">
-    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
-      <span>📜 アクティビティログ（直近4日）</span>
-      <button id="logRefreshBtn" type="button" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 更新</button>
-    </h2>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
-      予約・編集・席変更・シフト・ログイン等の操作履歴
-    </div>
-    <div id="activityLogList" style="max-height:380px;overflow-y:auto;">
-      <div class="empty-state" style="padding:16px;">読み込み中...</div>
-    </div>
-  </div>
 </section>
 
 <!-- ============================================ -->
@@ -1682,6 +1680,20 @@ select.time-select option:disabled { color: #aaa; }
     <h2>📅 直近の休業日</h2>
     <div id="holidayDisplay"></div>
   </div>
+
+  <!-- アクティビティログ（席情報タブの末尾・全員閲覧可） -->
+  <div class="card" id="activityLogCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>📜 アクティビティログ（直近4日）</span>
+      <button id="logRefreshBtn" type="button" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 更新</button>
+    </h2>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+      予約・編集・席変更・シフト・ログイン等の操作履歴
+    </div>
+    <div id="activityLogList" style="max-height:380px;overflow-y:auto;">
+      <div class="empty-state" style="padding:16px;">読み込み中...</div>
+    </div>
+  </div>
 </section>
 
 </main>
@@ -1689,7 +1701,7 @@ select.time-select option:disabled { color: #aaa; }
 <!-- Bottom navigation -->
 <nav class="bottom-nav">
   <button class="active" onclick="switchTab('seatmap')"><span class="icon">🪑</span>座席表</button>
-  <button onclick="switchTab('new')"><span class="icon">📝</span>新規</button>
+  <button onclick="switchTab('staff')"><span class="icon">👥</span>バイト管理</button>
   <button onclick="switchTab('list')"><span class="icon">📋</span>一覧</button>
   <button onclick="switchTab('info')"><span class="icon">ℹ️</span>席情報</button>
 </nav>
@@ -4225,17 +4237,26 @@ const TIME_SLOTS = (function() {
 
 function switchTab(name) {
   document.querySelectorAll('.bottom-nav button').forEach((b, i) => {
-    const tabs = ['seatmap', 'new', 'list', 'info'];
+    const tabs = ['seatmap', 'staff', 'list', 'info'];
     b.classList.toggle('active', tabs[i] === name);
   });
+  // tab-new は HTML上に残しておく（一覧からのボタンで起動するため）が、下部ナビからは見えない
   document.getElementById('tab-new').classList.toggle('hidden', name !== 'new');
   document.getElementById('tab-list').classList.toggle('hidden', name !== 'list');
   document.getElementById('tab-seatmap').classList.toggle('hidden', name !== 'seatmap');
   document.getElementById('tab-info').classList.toggle('hidden', name !== 'info');
+  const tabStaff = document.getElementById('tab-staff');
+  if (tabStaff) tabStaff.classList.toggle('hidden', name !== 'staff');
   if (name === 'list') renderReservationList();
   if (name === 'seatmap') {
     initSeatMap();
-    // 座席表表示時にログ一覧も自動更新
+  }
+  if (name === 'staff') {
+    // バイト管理タブ：個別シフト一覧の再描画など
+    try { initLaborSection(); } catch (e) {}
+  }
+  if (name === 'info') {
+    // 席情報タブ：アクティビティログを再描画
     try { fetchAndRenderActivityLog(); } catch (e) {}
   }
   // ★ 一覧 or 座席表へ切替時、最近の同期から30秒以上経っていればバックグラウンド同期して両ビューを更新
