@@ -900,12 +900,29 @@ button.secondary:active { background: var(--primary); color: white; }
 }
 .staff-month-grid .smc-day .smc-kou {
   display: block;
-  color: #e65100;
+  color: #0288d1;       /* 水色 */
   font-weight: 700;
   font-size: 10px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* 営業カレンダーから取込んだ店舗の休業日（バナー） */
+.staff-month-grid .smc-day .smc-biz-holiday {
+  display: block;
+  background: #c8201d;
+  color: white;
+  font-weight: 700;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.staff-month-grid .smc-day.biz-holiday {
+  background: #ffebee;
 }
 
 /* シフト追加モーダルの選択日チップ */
@@ -1688,7 +1705,7 @@ select.time-select option:disabled { color: #aaa; }
         </div>
       </div>
       <div style="font-size:10.5px;color:var(--muted);margin-bottom:5px;">
-        <span style="color:#1565c0;">出勤（黒）</span>　<span style="color:#c62828;font-weight:700;">不可（赤）</span>　<span style="color:#e65100;font-weight:700;">🏖公休（橙）</span>
+        <span>出勤（黒）</span>　<span style="color:#c62828;font-weight:700;">不可（赤）</span>　<span style="color:#0288d1;font-weight:700;">公休（水色）</span>　<span style="background:#c8201d;color:white;padding:0 4px;border-radius:3px;font-weight:700;">店舗休業</span>
       </div>
       <div id="staffMonthCalGrid" class="staff-month-grid">
         <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>
@@ -2612,6 +2629,13 @@ function _drawStaffMonthCal(byDate) {
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const today = new Date();
   const todayStrLocal = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2,'0') + '-' + String(today.getDate()).padStart(2,'0');
+  // 現店舗の営業カレンダー休業日マップ
+  const holMap = {};
+  try {
+    (typeof getHolidays === 'function' ? getHolidays() : []).forEach(function(h) {
+      if (h && h.date) holMap[h.date] = h;
+    });
+  } catch (e) {}
 
   let html = '';
   // 曜日ヘッダ
@@ -2632,11 +2656,21 @@ function _drawStaffMonthCal(byDate) {
     if (dow === 6) cls += ' sat';
     if (dateStr === todayStrLocal) cls += ' today';
     const items = byDate[dateStr] || [];
+    // 営業カレンダーの店舗休業日
+    const bizHoliday = holMap[dateStr];
+    if (bizHoliday) cls += ' biz-holiday';
     // 出勤と休み（不可・公休）に分類
     const works = items.filter(function(it) { return it.type === 'work'; });
     const unavs = items.filter(function(it) { return it.type === 'unav'; });
     const kous  = items.filter(function(it) { return it.type === 'kou'; });
     let inner = '<span class="smc-num">' + d + '</span>';
+    // 店舗休業日（営業カレンダー由来）— 最上段に赤バナーで表示
+    if (bizHoliday) {
+      const reason = bizHoliday.reason || '休業';
+      inner += '<span class="smc-biz-holiday" title="店舗休業日：' + escHtml(reason) + '">'
+            +   '休業' + (reason && reason !== '休業' && reason.length <= 6 ? '・' + escHtml(reason) : '')
+            +  '</span>';
+    }
     unavs.forEach(function(it) {
       inner += '<span class="smc-unav" title="不可：' + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '">'
             +    escHtml(it.name) + '休み'
@@ -2644,7 +2678,7 @@ function _drawStaffMonthCal(byDate) {
     });
     kous.forEach(function(it) {
       inner += '<span class="smc-kou" title="公休：' + escHtml(it.name) + '">'
-            +    '🏖' + escHtml(it.name)
+            +    escHtml(it.name) + '公休'
             +  '</span>';
     });
     works.forEach(function(it) {
@@ -3069,7 +3103,7 @@ function openStaffShiftModal() {
     +   '<div class="shift-type-toggle">'
     +     '<button type="button" id="typeShift" class="shift-type-btn active" data-type="shift">📅 出勤</button>'
     +     '<button type="button" id="typeUnav" class="shift-type-btn" data-type="unav">❌ 不可</button>'
-    +     '<button type="button" id="typeKou" class="shift-type-btn" data-type="kou">🏖 公休</button>'
+    +     '<button type="button" id="typeKou" class="shift-type-btn" data-type="kou" style="color:#0288d1;">公休</button>'
     +   '</div>'
     + '</div>'
     + '<div class="field">'
@@ -3540,11 +3574,11 @@ function renderStaffRail() {
     }
     // 公休リスト
     if (kouList.length > 0) {
-      html += '<div class="staff-unav-section" style="background:#fff8e1;border-color:#ffd54f;">'
-           +   '<div class="staff-unav-header" style="color:#e65100;">🏖 公休</div>'
+      html += '<div class="staff-unav-section" style="background:#e1f5fe;border-color:#81d4fa;">'
+           +   '<div class="staff-unav-header" style="color:#0277bd;">公休</div>'
            +   kouList.map(function(u) {
                  return '<div class="staff-unav-item">'
-                      +   '<span class="staff-name" style="color:#bf360c;">' + u.name + '</span>'
+                      +   '<span class="staff-name" style="color:#01579b;">' + u.name + '</span>'
                       + '</div>';
                }).join('')
            + '</div>';
