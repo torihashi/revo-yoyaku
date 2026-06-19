@@ -4035,8 +4035,15 @@ function setCurrentStore(store) {
   } catch (e) {}
 
   // ★ バイト管理タブの月間カレンダーも新店舗で再描画（鳥はし⇄リボ追従）
+  // 休業日も新店舗のを取得し直してから描画
   try {
-    if (typeof renderStaffMonthCal === 'function') renderStaffMonthCal();
+    if (typeof fetchHolidays === 'function') {
+      fetchHolidays(store, function() {
+        if (typeof renderStaffMonthCal === 'function') renderStaffMonthCal();
+      });
+    } else if (typeof renderStaffMonthCal === 'function') {
+      renderStaffMonthCal();
+    }
   } catch (e) {}
 
   // 新規予約タブの空き判定結果を新しい店舗のロジックで再計算
@@ -4522,8 +4529,16 @@ function switchTab(name) {
     initSeatMap();
   }
   if (name === 'staff') {
-    // バイト管理タブ：月間カレンダー + 労働集計の再描画
-    try { renderStaffMonthCal(); } catch (e) {}
+    // バイト管理タブ：休業日同期 → 月間カレンダー + 労働集計の再描画
+    try {
+      if (typeof fetchHolidays === 'function') {
+        fetchHolidays(currentStore, function() {
+          try { renderStaffMonthCal(); } catch (e) {}
+        });
+      } else {
+        renderStaffMonthCal();
+      }
+    } catch (e) {}
     try { initLaborSection(); } catch (e) {}
   }
   if (name === 'info') {
