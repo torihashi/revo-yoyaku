@@ -3255,7 +3255,8 @@ function openStaffShiftModal() {
         const n = m ? m[1] : rest;
         unavSet[n] = true;
       } else if (s.name.indexOf('🏖') === 0) {
-        const rest = s.name.substring(1).trim();
+        // 🏖はサロゲートペア — 正規表現で安全に除去
+        const rest = s.name.replace(/^🏖\s*/, '').trim();
         const m = rest.match(/^(.+?)\s*[（(]/);
         const n = m ? m[1] : rest;
         kouSet[n] = true;
@@ -3508,7 +3509,8 @@ function renderStaffRail() {
         if (m) unavailable.push({ name: m[1], reason: m[2] });
         else  unavailable.push({ name: rest, reason: '' });
       } else if (s.name.indexOf('🏖') === 0) {
-        const rest = s.name.substring(1).trim();
+        // 🏖はサロゲートペア — 正規表現で安全に除去
+        const rest = s.name.replace(/^🏖\s*/, '').trim();
         const m = rest.match(/^(.+?)\s*[（(]\s*(.+?)\s*[)）]\s*$/);
         if (m) kouList.push({ name: m[1] });
         else  kouList.push({ name: rest });
