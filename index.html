@@ -951,6 +951,26 @@ button.secondary:active { background: var(--primary); color: white; }
 .staff-month-detail .smd-type.work { background: #e8f5e9; color: #2e7d32; }
 .staff-month-detail .smd-type.unav { background: #ffebee; color: #c62828; }
 .staff-month-detail .smd-type.kou { background: #e1f5fe; color: #0277bd; }
+.staff-month-detail .smd-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.staff-month-detail .smd-action {
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--primary-dark);
+  border-radius: 6px;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+.staff-month-detail .smd-action.danger {
+  color: #c62828;
+  border-color: #ef9a9a;
+}
 .staff-month-detail .smd-empty {
   padding: 10px;
   color: var(--muted);
@@ -2661,8 +2681,8 @@ function canEditStaffShift(rawName) {
 }
 
 // シフト削除（イベントID指定・店舗指定）
-function deleteStaffShiftEvent(eventId, store, displayName, callback) {
-  if (!canDeleteShift()) {
+function deleteStaffShiftEvent(eventId, store, displayName, callback, staffNameForPermission) {
+  if (!canDeleteShift() && !canEditStaffShift(staffNameForPermission || displayName)) {
     alert('シフトの削除権限がありません');
     return;
   }
@@ -3068,7 +3088,7 @@ function renderStaffMonthDayDetail(dateStr) {
   const wd = ['日','月','火','水','木','金','土'];
   const d = new Date(dateStr + 'T00:00:00');
   const label = (d.getMonth() + 1) + '/' + d.getDate() + '（' + wd[d.getDay()] + '）';
-  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">名前を長押しで編集</span></div>'
+  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">ボタンで編集・削除</span></div>'
     + '<div class="smd-body"><div class="smd-empty">読み込み中...</div></div>';
 
   fetchStaffSchedule(dateStr, currentStore, function(items) {
@@ -3086,13 +3106,20 @@ function renderStaffMonthDayDetail(dateStr) {
       const typeClass = parsed.type === 'unav' ? 'unav' : parsed.type === 'kou' ? 'kou' : 'work';
       const typeLabel = parsed.type === 'unav' ? '不可' : parsed.type === 'kou' ? '公休' : '出勤';
       const canEdit = canEditStaffShift(parsed.employee) && item.id && String(item.id).indexOf('tmp-') !== 0;
+      const actions = canEdit
+        ? '<span class="smd-actions">'
+          + '<button type="button" class="smd-action" data-action="edit" data-edit-idx="' + idx + '">移動/編集</button>'
+          + '<button type="button" class="smd-action danger" data-action="delete" data-edit-idx="' + idx + '">削除</button>'
+          + '</span>'
+        : '';
       return '<div class="smd-item" data-idx="' + idx + '">'
         + '<span class="smd-time">' + escHtml(staffEventStartLabel({ start: item.start, type: typeClass })) + '</span>'
         + '<span class="smd-name' + (canEdit ? ' longpressable' : '') + '" data-edit-idx="' + idx + '">' + escHtml(getStaffDisplayName(parsed.employee)) + '</span>'
         + '<span class="smd-type ' + typeClass + '">' + typeLabel + '</span>'
+        + actions
         + '</div>';
     }).join('');
-    body.querySelectorAll('[data-edit-idx]').forEach(function(el) {
+    body.querySelectorAll('.smd-name[data-edit-idx]').forEach(function(el) {
       const idx = parseInt(el.getAttribute('data-edit-idx'), 10);
       const item = shifts[idx];
       const parsed = parseStaffShiftItem(item);
@@ -3101,6 +3128,32 @@ function renderStaffMonthDayDetail(dateStr) {
         e.preventDefault();
         e.stopPropagation();
         openStaffShiftEditModal(item, dateStr);
+      });
+    });
+    body.querySelectorAll('.smd-action[data-edit-idx]').forEach(function(btn) {
+      btn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const idx = parseInt(btn.getAttribute('data-edit-idx'), 10);
+        const item = shifts[idx];
+        if (!item) return;
+        const parsed = parseStaffShiftItem(item);
+        if (!canEditStaffShift(parsed.employee)) {
+          alert('この予定を操作する権限がありません');
+          return;
+        }
+        if (btn.getAttribute('data-action') === 'edit') {
+          openStaffShiftEditModal(item, dateStr);
+          return;
+        }
+        deleteStaffShiftEvent(item.id, currentStore, parsed.employee, function(ok) {
+          if (!ok) return;
+          delete _staffSchedCache[_staffKey(dateStr, currentStore)];
+          const d = new Date(dateStr + 'T00:00:00');
+          delete _staffMonthCalCache[_monthCalKey(currentStore, d.getFullYear(), d.getMonth() + 1)];
+          renderStaffMonthCal();
+          renderStaffMonthDayDetail(dateStr);
+        }, parsed.employee);
       });
     });
   });
