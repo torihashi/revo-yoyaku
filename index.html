@@ -2655,17 +2655,8 @@ function _fetchStaffMonthDays(state, callback) {
   });
 }
 
-// シフト削除が許可される管理者氏名（完全一致）
-const SHIFT_ADMIN_NAMES = ['佐藤千征', '下村利春'];
-
 function canDeleteShift() {
-  if (!currentUser || !currentUser.name) return false;
-  const n = String(currentUser.name).trim();
-  // 完全一致 + 空白除去版でも判定（マスタの揺れ対応）
-  const compact = n.replace(/\s+/g, '');
-  return SHIFT_ADMIN_NAMES.some(function(a) {
-    return a === n || a === compact || a.replace(/\s+/g, '') === compact;
-  });
+  return !!(currentUser && currentUser.isAdmin);
 }
 
 function isSameStaffName(a, b) {
@@ -2675,14 +2666,12 @@ function isSameStaffName(a, b) {
 }
 
 function canEditStaffShift(rawName) {
-  if (canDeleteShift()) return true;
-  if (!currentUser || !currentUser.name) return false;
-  return isSameStaffName(rawName, currentUser.name);
+  return canDeleteShift();
 }
 
 // シフト削除（イベントID指定・店舗指定）
 function deleteStaffShiftEvent(eventId, store, displayName, callback, staffNameForPermission) {
-  if (!canDeleteShift() && !canEditStaffShift(staffNameForPermission || displayName)) {
+  if (!canDeleteShift()) {
     alert('シフトの削除権限がありません');
     return;
   }
@@ -2695,7 +2684,8 @@ function deleteStaffShiftEvent(eventId, store, displayName, callback, staffNameF
   callWebhook({
     action: 'deleteStaffShift',
     store: store || currentStore,
-    eventId: eventId
+    eventId: eventId,
+    userEmail: currentUser && currentUser.email || ''
   }).then(function(resp) {
     if (resp && resp.ok) {
       updateSyncStatus('✓ 削除完了', '#2e7d32');
@@ -2755,7 +2745,7 @@ function getStaffDisplayName(rawName) {
   const family = getStaffFamilyKey(name);
   if (!family) return name;
   const employees = getCachedEmployees(currentStore) || [];
-  const knownNames = employees.map(function(e) { return e.name; }).concat(SHIFT_ADMIN_NAMES || []);
+  const knownNames = employees.map(function(e) { return e.name; });
   const sameFamilySet = {};
   knownNames.forEach(function(n) {
     const normalized = normalizeStaffEventName(n);
@@ -3252,6 +3242,7 @@ function openStaffShiftEditModal(item, originalDate) {
       action: 'updateStaffShift',
       store: currentStore,
       eventId: item.id,
+      userEmail: currentUser && currentUser.email || '',
       name: title,
       start: start.toISOString(),
       end: end.toISOString()
