@@ -2925,30 +2925,18 @@ function _drawStaffMonthCal(byDate) {
             +   '休業' + (reason && reason !== '休業' && reason.length <= 6 ? '・' + escHtml(reason) : '')
             +  '</span>';
     }
-    const isAdmin = canDeleteShift();
-    const adminCursor = isAdmin ? 'cursor:pointer;' : '';
-    const adminAttr = function(it, kind) {
-      if (!isAdmin || !it.id) return '';
-      const label = kind + '：' + (it.name || '');
-      return ' data-shift-id="' + escHtml(it.id) + '" data-shift-name="' + escHtml(label) + '" data-shift-kind="' + kind + '" style="' + adminCursor + 'text-decoration:' + (isAdmin ? 'underline dotted' : 'none') + ';"';
-    };
-    const editAttr = function(it) {
-      if (!it || !it.id || String(it.id).indexOf('tmp-') === 0 || !canEditStaffShift(it.name)) return '';
-      return ' data-edit-shift-id="' + escHtml(it.id) + '" data-edit-shift-date="' + dateStr + '"';
-    };
     unavs.forEach(function(it) {
-      inner += '<span class="smc-unav" title="' + (isAdmin ? 'タップで削除：' : '不可：') + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '"' + adminAttr(it, '不可') + '>'
+      inner += '<span class="smc-unav" title="不可：' + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '">'
             +    escHtml(getStaffDisplayName(it.name)) + '休み'
             +  '</span>';
     });
     kous.forEach(function(it) {
-      inner += '<span class="smc-kou" title="' + (isAdmin ? 'タップで削除：' : '公休：') + escHtml(it.name) + '"' + adminAttr(it, '公休') + '>'
+      inner += '<span class="smc-kou" title="公休：' + escHtml(it.name) + '">'
             +    escHtml(getStaffDisplayName(it.name)) + '公休'
             +  '</span>';
     });
     works.forEach(function(it) {
-      const editStyle = canEditStaffShift(it.name) && !isAdmin ? ' style="text-decoration:underline dotted;text-underline-offset:2px;"' : '';
-      inner += '<span class="smc-work" title="' + (canEditStaffShift(it.name) ? '長押しで編集：' : isAdmin ? 'タップで削除：' : '出勤：') + escHtml(it.name) + '"' + adminAttr(it, '出勤') + editAttr(it) + editStyle + '>'
+      inner += '<span class="smc-work" title="出勤：' + escHtml(it.name) + '">'
             + escHtml(getStaffDisplayName(it.name)) + '</span>';
     });
     html += '<div class="' + cls + '" data-date="' + dateStr + '">' + inner + '</div>';
@@ -2958,34 +2946,6 @@ function _drawStaffMonthCal(byDate) {
     dayEl.addEventListener('click', function() {
       _staffMonthCalState.selectedDate = dayEl.getAttribute('data-date') || '';
       _drawStaffMonthCal(byDate);
-    });
-  });
-  // 管理者のみ：シフトクリックで削除
-  if (canDeleteShift()) {
-    grid.querySelectorAll('[data-shift-id]').forEach(function(el) {
-      el.addEventListener('click', function(e) {
-        e.stopPropagation();
-        const id = el.getAttribute('data-shift-id');
-        const name = el.getAttribute('data-shift-name');
-        deleteStaffShiftEvent(id, currentStore, name);
-      });
-    });
-  }
-  grid.querySelectorAll('[data-edit-shift-id]').forEach(function(el) {
-    const id = el.getAttribute('data-edit-shift-id');
-    const date = el.getAttribute('data-edit-shift-date');
-    const sourceItems = (byDate[date] || []);
-    const item = sourceItems.find(function(it) { return it.id === id; });
-    if (!item) return;
-    bindLongPress(el, function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-      openStaffShiftEditModal({
-        id: item.id,
-        name: item.name,
-        start: item.start,
-        end: item.end
-      }, date);
     });
   });
   if (_staffMonthCalState.selectedDate) {
