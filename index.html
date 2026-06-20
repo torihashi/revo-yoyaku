@@ -2566,6 +2566,62 @@ function _fetchStaffMonthDays(state, callback) {
   });
 }
 
+// シフト削除が許可される管理者氏名（完全一致）
+const SHIFT_ADMIN_NAMES = ['佐藤千征', '下村利春'];
+
+function canDeleteShift() {
+  if (!currentUser || !currentUser.name) return false;
+  const n = String(currentUser.name).trim();
+  // 完全一致 + 空白除去版でも判定（マスタの揺れ対応）
+  const compact = n.replace(/\s+/g, '');
+  return SHIFT_ADMIN_NAMES.some(function(a) {
+    return a === n || a === compact || a.replace(/\s+/g, '') === compact;
+  });
+}
+
+// シフト削除（イベントID指定・店舗指定）
+function deleteStaffShiftEvent(eventId, store, displayName, callback) {
+  if (!canDeleteShift()) {
+    alert('シフトの削除権限がありません');
+    return;
+  }
+  if (!isWebhookConfigured()) {
+    alert('Webhook未設定です');
+    return;
+  }
+  if (!confirm('「' + displayName + '」のシフトを削除しますか？\nこの操作は取り消せません。')) return;
+  updateSyncStatus('削除中...', '#ef6c00');
+  callWebhook({
+    action: 'deleteStaffShift',
+    store: store || currentStore,
+    eventId: eventId
+  }).then(function(resp) {
+    if (resp && resp.ok) {
+      updateSyncStatus('✓ 削除完了', '#2e7d32');
+      logActivity('🗑 シフト削除', displayName, '');
+      // 月間キャッシュを当月分だけ無効化して再フェッチ
+      try {
+        const key = _monthCalKey();
+        delete _staffMonthCalCache[key];
+        renderStaffMonthCal();
+      } catch (e) {}
+      // 本日のシフトレールも再描画
+      try {
+        // スタッフ予定キャッシュも無効化
+        const date = smState.date || todayStr();
+        delete _staffSchedCache[_staffKey(date, currentStore)];
+        renderStaffRail();
+      } catch (e) {}
+      if (callback) callback(true);
+    } else {
+      updateSyncStatus('⚠ 削除失敗', '#c62828');
+      alert('削除に失敗しました: ' + (resp && resp.error || '不明'));
+      if (callback) callback(false);
+    }
+    setTimeout(function() { updateSyncStatus(''); }, 3000);
+  });
+}
+
 // 月間スタッフカレンダー状態 + キャッシュ
 const _staffMonthCalState = { year: null, month: null, data: null };
 // キャッシュ: store|year|month → { byDate, ts }
@@ -2714,22 +2770,41 @@ function _drawStaffMonthCal(byDate) {
             +   '休業' + (reason && reason !== '休業' && reason.length <= 6 ? '・' + escHtml(reason) : '')
             +  '</span>';
     }
+    const isAdmin = canDeleteShift();
+    const adminCursor = isAdmin ? 'cursor:pointer;' : '';
+    const adminAttr = function(it, kind) {
+      if (!isAdmin || !it.id) return '';
+      const label = kind + '：' + (it.name || '');
+      return ' data-shift-id="' + escHtml(it.id) + '" data-shift-name="' + escHtml(label) + '" data-shift-kind="' + kind + '" style="' + adminCursor + 'text-decoration:' + (isAdmin ? 'underline dotted' : 'none') + ';"';
+    };
     unavs.forEach(function(it) {
-      inner += '<span class="smc-unav" title="不可：' + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '">'
+      inner += '<span class="smc-unav" title="' + (isAdmin ? 'タップで削除：' : '不可：') + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '"' + adminAttr(it, '不可') + '>'
             +    escHtml(it.name) + '休み'
             +  '</span>';
     });
     kous.forEach(function(it) {
-      inner += '<span class="smc-kou" title="公休：' + escHtml(it.name) + '">'
+      inner += '<span class="smc-kou" title="' + (isAdmin ? 'タップで削除：' : '公休：') + escHtml(it.name) + '"' + adminAttr(it, '公休') + '>'
             +    escHtml(it.name) + '公休'
             +  '</span>';
     });
     works.forEach(function(it) {
-      inner += '<span class="smc-work" title="出勤：' + escHtml(it.name) + '">' + escHtml(it.name) + '</span>';
+      inner += '<span class="smc-work" title="' + (isAdmin ? 'タップで削除：' : '出勤：') + escHtml(it.name) + '"' + adminAttr(it, '出勤') + '>'
+            + escHtml(it.name) + '</span>';
     });
     html += '<div class="' + cls + '">' + inner + '</div>';
   }
   grid.innerHTML = html;
+  // 管理者のみ：シフトクリックで削除
+  if (canDeleteShift()) {
+    grid.querySelectorAll('[data-shift-id]').forEach(function(el) {
+      el.addEventListener('click', function(e) {
+        e.stopPropagation();
+        const id = el.getAttribute('data-shift-id');
+        const name = el.getAttribute('data-shift-name');
+        deleteStaffShiftEvent(id, currentStore, name);
+      });
+    });
+  }
 }
 
 // PIN 認証済みフラグ（氏名ごとに記録）
@@ -3171,7 +3246,8 @@ function openStaffShiftModal() {
   document.body.appendChild(overlay);
 
   // ===== 複数日選択ロジック =====
-  const selectedDates = new Set([date]); // 初期は今日 or 座席表で開いていた日
+  // 初期は何も選択しない（ユーザーがカレンダーから明示的に選ぶ）
+  const selectedDates = new Set();
 
   function renderSelectedChips() {
     const wrap = document.getElementById('shiftSelectedDates');
@@ -3613,15 +3689,24 @@ function renderStaffRail() {
 
     // 通常シフト＋タイムカード表示
     // 仕様：開始時刻だけ表示。実動時間（退勤時刻・セグメント詳細）は非表示
+    const isAdmin = canDeleteShift();
+    const sourceShifts = shifts; // GAS から取得した元データ（idつき）
     let html = entries.map(function(e) {
-      // 実打刻があれば実打刻の開始時刻、無ければ予定の開始時刻
       const startOnly = e.actualStart || e.plannedStart || '';
       const hasActual = !!(e.actualStart || (e.segments && e.segments.length > 0));
-      // 実打刻ありなら ✓ マークだけ表示（出勤確定）
       const actualMark = hasActual ? ' <span style="color:#2e7d32;font-size:11px">✓出勤</span>' : '';
+      // 管理者用の削除ボタン
+      let deleteBtn = '';
+      if (isAdmin && !hasActual) {
+        // 元データから一致するイベント ID を探す（タイトル == 名前）
+        const matched = sourceShifts.find(function(s) { return s.name === e.name && !s.id.startsWith('tmp-'); });
+        if (matched && matched.id) {
+          deleteBtn = ' <button class="staff-delete-btn" data-shift-id="' + matched.id + '" data-shift-name="' + e.name + '" style="margin-left:4px;background:transparent;border:1px solid #c62828;color:#c62828;font-size:10px;padding:1px 6px;border-radius:4px;cursor:pointer;font-family:inherit;">🗑</button>';
+        }
+      }
       return '<div class="staff-item' + (hasActual ? ' staff-actual' : '') + '">'
            +   '<span class="staff-time">' + (startOnly ? startOnly + '〜' : '') + '</span>'
-           +   '<span class="staff-name">' + e.name + actualMark + '</span>'
+           +   '<span class="staff-name">' + e.name + actualMark + deleteBtn + '</span>'
            + '</div>';
     }).join('');
 
@@ -3649,6 +3734,17 @@ function renderStaffRail() {
            + '</div>';
     }
     content.innerHTML = html;
+    // 管理者のみ：削除ボタンのクリックを bind
+    if (canDeleteShift()) {
+      content.querySelectorAll('.staff-delete-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-shift-id');
+          const name = btn.getAttribute('data-shift-name');
+          deleteStaffShiftEvent(id, currentStore, name);
+        });
+      });
+    }
   });
 }
 
