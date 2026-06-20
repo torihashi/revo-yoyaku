@@ -864,6 +864,12 @@ button.secondary:active { background: var(--primary); color: white; }
   line-height: 1.3;
   overflow: hidden;
   position: relative;
+  cursor: pointer;
+}
+.staff-month-grid .smc-day.selected {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: #fafffa;
 }
 .staff-month-grid .smc-day.blank { background: #fafafa; }
 .staff-month-grid .smc-day .smc-num {
@@ -888,6 +894,68 @@ button.secondary:active { background: var(--primary); color: white; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.staff-month-detail {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+.staff-month-detail .smd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--primary-light);
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 700;
+}
+.staff-month-detail .smd-body {
+  padding: 8px 10px;
+}
+.staff-month-detail .smd-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+}
+.staff-month-detail .smd-item:last-child { border-bottom: none; }
+.staff-month-detail .smd-time {
+  width: 56px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+}
+.staff-month-detail .smd-name {
+  flex: 1;
+  font-weight: 700;
+  min-width: 0;
+}
+.staff-month-detail .smd-name.longpressable {
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+.staff-month-detail .smd-type {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.staff-month-detail .smd-type.work { background: #e8f5e9; color: #2e7d32; }
+.staff-month-detail .smd-type.unav { background: #ffebee; color: #c62828; }
+.staff-month-detail .smd-type.kou { background: #e1f5fe; color: #0277bd; }
+.staff-month-detail .smd-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 .staff-month-grid .smc-day .smc-unav {
   display: block;
@@ -1710,6 +1778,7 @@ select.time-select option:disabled { color: #aaa; }
       <div id="staffMonthCalGrid" class="staff-month-grid">
         <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>
       </div>
+      <div id="staffMonthDayDetail" class="staff-month-detail hidden"></div>
     </div>
 
     <!-- 個別シフト一覧（氏名+PIN認証で詳細表示） -->
@@ -2623,7 +2692,7 @@ function deleteStaffShiftEvent(eventId, store, displayName, callback) {
 }
 
 // 月間スタッフカレンダー状態 + キャッシュ
-const _staffMonthCalState = { year: null, month: null, data: null };
+const _staffMonthCalState = { year: null, month: null, data: null, selectedDate: '' };
 // キャッシュ: store|year|month → { byDate, ts }
 const _staffMonthCalCache = {};
 function _monthCalKey(store, year, month) {
@@ -2631,6 +2700,58 @@ function _monthCalKey(store, year, month) {
   year  = year  || _staffMonthCalState.year;
   month = month || _staffMonthCalState.month;
   return store + '|' + year + '|' + month;
+}
+
+function normalizeStaffEventName(rawName) {
+  let name = String(rawName || '').trim();
+  name = name.replace(/^❌\s*/, '').replace(/^🏖\s*/, '').trim();
+  name = name.replace(/\s*[（(].*?[)）]\s*$/, '').trim();
+  return name;
+}
+
+function getStaffFamilyKey(name) {
+  const n = normalizeStaffEventName(name).replace(/\s+/g, ' ').trim();
+  if (!n) return '';
+  const parts = n.split(' ');
+  if (parts.length >= 2) return parts[0];
+  return n.length >= 4 ? n.slice(0, 2) : n.slice(0, 1);
+}
+
+function getStaffDisplayName(rawName) {
+  const name = normalizeStaffEventName(rawName);
+  if (!name) return '';
+  const family = getStaffFamilyKey(name);
+  if (!family) return name;
+  const employees = getCachedEmployees(currentStore) || [];
+  const sameFamilyCount = employees.filter(function(e) {
+    return getStaffFamilyKey(e.name) === family;
+  }).length;
+  if (sameFamilyCount > 1) {
+    const spaced = name.replace(/\s+/g, ' ').trim();
+    const parts = spaced.split(' ');
+    if (parts.length >= 2) return parts.slice(1).join('');
+    if (name.indexOf(family) === 0 && name.length > family.length) {
+      return name.slice(family.length);
+    }
+    return name;
+  }
+  return family;
+}
+
+function getStaffEventTypeInfo(item) {
+  if (!item) return { type: 'work', label: '出勤', title: normalizeStaffEventName('') };
+  const raw = String(item.rawName || item.title || item.name || '').trim();
+  const type = item.type || (raw.indexOf('❌') === 0 ? 'unav' : raw.indexOf('🏖') === 0 ? 'kou' : 'work');
+  const label = type === 'unav' ? '不可' : type === 'kou' ? '公休' : '出勤';
+  return { type: type, label: label, title: raw };
+}
+
+function staffEventStartLabel(item) {
+  if (!item || !item.start) return '';
+  const d = new Date(item.start);
+  if (isNaN(d.getTime())) return '';
+  if (item.type === 'unav' || item.type === 'kou') return '終日';
+  return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
 
 // 楽観的UI：シフトを月間カレンダーキャッシュに即時追加 → 必要なら再描画
@@ -2754,6 +2875,7 @@ function _drawStaffMonthCal(byDate) {
     if (dow === 0) cls += ' sun';
     if (dow === 6) cls += ' sat';
     if (dateStr === todayStrLocal) cls += ' today';
+    if (_staffMonthCalState.selectedDate === dateStr) cls += ' selected';
     const items = byDate[dateStr] || [];
     // 営業カレンダーの店舗休業日
     const bizHoliday = holMap[dateStr];
@@ -2779,21 +2901,27 @@ function _drawStaffMonthCal(byDate) {
     };
     unavs.forEach(function(it) {
       inner += '<span class="smc-unav" title="' + (isAdmin ? 'タップで削除：' : '不可：') + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '"' + adminAttr(it, '不可') + '>'
-            +    escHtml(it.name) + '休み'
+            +    escHtml(getStaffDisplayName(it.name)) + '休み'
             +  '</span>';
     });
     kous.forEach(function(it) {
       inner += '<span class="smc-kou" title="' + (isAdmin ? 'タップで削除：' : '公休：') + escHtml(it.name) + '"' + adminAttr(it, '公休') + '>'
-            +    escHtml(it.name) + '公休'
+            +    escHtml(getStaffDisplayName(it.name)) + '公休'
             +  '</span>';
     });
     works.forEach(function(it) {
       inner += '<span class="smc-work" title="' + (isAdmin ? 'タップで削除：' : '出勤：') + escHtml(it.name) + '"' + adminAttr(it, '出勤') + '>'
-            + escHtml(it.name) + '</span>';
+            + escHtml(getStaffDisplayName(it.name)) + '</span>';
     });
-    html += '<div class="' + cls + '">' + inner + '</div>';
+    html += '<div class="' + cls + '" data-date="' + dateStr + '">' + inner + '</div>';
   }
   grid.innerHTML = html;
+  grid.querySelectorAll('.smc-day[data-date]').forEach(function(dayEl) {
+    dayEl.addEventListener('click', function() {
+      _staffMonthCalState.selectedDate = dayEl.getAttribute('data-date') || '';
+      _drawStaffMonthCal(byDate);
+    });
+  });
   // 管理者のみ：シフトクリックで削除
   if (canDeleteShift()) {
     grid.querySelectorAll('[data-shift-id]').forEach(function(el) {
@@ -2805,6 +2933,235 @@ function _drawStaffMonthCal(byDate) {
       });
     });
   }
+  if (_staffMonthCalState.selectedDate) {
+    const selectedMonth = _staffMonthCalState.selectedDate.slice(0, 7);
+    const currentMonth = y + '-' + String(m + 1).padStart(2,'0');
+    if (selectedMonth === currentMonth) renderStaffMonthDayDetail(_staffMonthCalState.selectedDate);
+  }
+}
+
+function bindLongPress(el, onLongPress) {
+  let timer = null;
+  let fired = false;
+  const clear = function() {
+    if (timer) clearTimeout(timer);
+    timer = null;
+  };
+  const start = function(e) {
+    fired = false;
+    clear();
+    timer = setTimeout(function() {
+      fired = true;
+      onLongPress(e);
+    }, 650);
+  };
+  const end = function(e) {
+    clear();
+    if (fired) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  el.addEventListener('touchstart', start, { passive: true });
+  el.addEventListener('touchend', end);
+  el.addEventListener('touchcancel', clear);
+  el.addEventListener('mousedown', start);
+  el.addEventListener('mouseup', end);
+  el.addEventListener('mouseleave', clear);
+}
+
+function parseStaffShiftItem(item) {
+  const rawName = String(item && item.name || '').trim();
+  let type = 'shift';
+  let employee = rawName;
+  let reason = '';
+  if (rawName.indexOf('❌') === 0) {
+    type = 'unav';
+    const rest = rawName.substring(1).trim();
+    const m = rest.match(/^(.+?)\s*[（(]\s*(.+?)\s*[)）]\s*$/);
+    employee = m ? m[1].trim() : rest;
+    reason = m ? m[2].trim() : '';
+  } else if (rawName.indexOf('🏖') === 0) {
+    type = 'kou';
+    const rest = rawName.replace(/^🏖\s*/, '').trim();
+    const m = rest.match(/^(.+?)\s*[（(]\s*(.+?)\s*[)）]\s*$/);
+    employee = m ? m[1].trim() : rest;
+  }
+  return { type: type, employee: employee, reason: reason };
+}
+
+function renderStaffMonthDayDetail(dateStr) {
+  const panel = document.getElementById('staffMonthDayDetail');
+  if (!panel) return;
+  if (!dateStr) {
+    panel.classList.add('hidden');
+    panel.innerHTML = '';
+    return;
+  }
+  panel.classList.remove('hidden');
+  const wd = ['日','月','火','水','木','金','土'];
+  const d = new Date(dateStr + 'T00:00:00');
+  const label = (d.getMonth() + 1) + '/' + d.getDate() + '（' + wd[d.getDay()] + '）';
+  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">名前を長押しで編集</span></div>'
+    + '<div class="smd-body"><div class="smd-empty">読み込み中...</div></div>';
+
+  fetchStaffSchedule(dateStr, currentStore, function(items) {
+    const body = panel.querySelector('.smd-body');
+    if (!body) return;
+    const shifts = (items || []).slice().sort(function(a, b) {
+      return String(a.start || '').localeCompare(String(b.start || ''));
+    });
+    if (shifts.length === 0) {
+      body.innerHTML = '<div class="smd-empty">この日の予定はありません</div>';
+      return;
+    }
+    body.innerHTML = shifts.map(function(item, idx) {
+      const parsed = parseStaffShiftItem(item);
+      const typeClass = parsed.type === 'unav' ? 'unav' : parsed.type === 'kou' ? 'kou' : 'work';
+      const typeLabel = parsed.type === 'unav' ? '不可' : parsed.type === 'kou' ? '公休' : '出勤';
+      const canEdit = canDeleteShift() && item.id && String(item.id).indexOf('tmp-') !== 0;
+      return '<div class="smd-item" data-idx="' + idx + '">'
+        + '<span class="smd-time">' + escHtml(staffEventStartLabel({ start: item.start, type: typeClass })) + '</span>'
+        + '<span class="smd-name' + (canEdit ? ' longpressable' : '') + '" data-edit-idx="' + idx + '">' + escHtml(getStaffDisplayName(parsed.employee)) + '</span>'
+        + '<span class="smd-type ' + typeClass + '">' + typeLabel + '</span>'
+        + '</div>';
+    }).join('');
+    body.querySelectorAll('[data-edit-idx]').forEach(function(el) {
+      const idx = parseInt(el.getAttribute('data-edit-idx'), 10);
+      const item = shifts[idx];
+      if (!item || !canDeleteShift() || !item.id || String(item.id).indexOf('tmp-') === 0) return;
+      bindLongPress(el, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        openStaffShiftEditModal(item, dateStr);
+      });
+    });
+  });
+}
+
+function openStaffShiftEditModal(item, originalDate) {
+  if (!canDeleteShift()) {
+    alert('シフトの編集権限がありません');
+    return;
+  }
+  const parsed = parseStaffShiftItem(item);
+  const startDate = item.start ? new Date(item.start) : new Date(originalDate + 'T17:00:00');
+  const initialDate = originalDate || (
+    startDate.getFullYear() + '-' + String(startDate.getMonth()+1).padStart(2,'0') + '-' + String(startDate.getDate()).padStart(2,'0')
+  );
+  const initialTime = String(startDate.getHours()).padStart(2,'0') + ':' + String(startDate.getMinutes()).padStart(2,'0');
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  function makeTimeOptions(selected) {
+    let opts = '';
+    for (let h = 11; h <= 26; h++) {
+      for (let m of [0, 30]) {
+        const realH = h % 24;
+        const value = String(realH).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        const display = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        opts += '<option value="' + value + '"' + (value === selected ? ' selected' : '') + '>' + display + '</option>';
+      }
+    }
+    return opts;
+  }
+
+  const cachedEmps = getCachedEmployees(currentStore) || [];
+  const optionSource = cachedEmps.length > 0 ? cachedEmps : [{ name: parsed.employee }];
+  const options = '<option value="">▼ 選択してください</option>' + optionSource.map(function(e) {
+    return '<option value="' + escHtml(e.name) + '"' + (e.name === parsed.employee ? ' selected' : '') + '>' + escHtml(e.name) + '</option>';
+  }).join('');
+
+  overlay.innerHTML = '<div class="modal" style="max-width:460px">'
+    + '<h3>シフト編集</h3>'
+    + '<div class="field"><label>対象日<span class="req">*</span></label><input type="date" id="editShiftDate" value="' + escHtml(initialDate) + '" /></div>'
+    + '<div class="field"><label>種類</label>'
+    + '<div class="shift-type-toggle">'
+    + '<button type="button" id="editTypeShift" class="shift-type-btn" data-type="shift">📅 出勤</button>'
+    + '<button type="button" id="editTypeUnav" class="shift-type-btn" data-type="unav">❌ 不可</button>'
+    + '<button type="button" id="editTypeKou" class="shift-type-btn" data-type="kou" style="color:#0288d1;">公休</button>'
+    + '</div></div>'
+    + '<div class="field"><label>従業員<span class="req">*</span></label><select id="editShiftEmployee">' + options + '</select></div>'
+    + '<div class="field" id="editShiftStartField"><label>開始時刻<span class="req">*</span></label><select id="editShiftStart">' + makeTimeOptions(initialTime) + '</select></div>'
+    + '<div class="field hidden" id="editUnavReasonField"><label>理由（任意）</label><input type="text" id="editUnavReason" value="' + escHtml(parsed.reason || '') + '" /></div>'
+    + '<button class="primary" id="saveEditShiftBtn">変更を保存</button>'
+    + '<button class="secondary" id="closeEditShiftBtn">キャンセル</button>'
+    + '</div>';
+  document.body.appendChild(overlay);
+
+  let currentType = parsed.type;
+  function setType(type) {
+    currentType = type;
+    document.getElementById('editTypeShift').classList.toggle('active', type === 'shift');
+    document.getElementById('editTypeUnav').classList.toggle('active', type === 'unav');
+    document.getElementById('editTypeKou').classList.toggle('active', type === 'kou');
+    document.getElementById('editShiftStartField').classList.toggle('hidden', type !== 'shift');
+    document.getElementById('editUnavReasonField').classList.toggle('hidden', type !== 'unav');
+  }
+  setType(currentType);
+  document.getElementById('editTypeShift').addEventListener('click', function() { setType('shift'); });
+  document.getElementById('editTypeUnav').addEventListener('click', function() { setType('unav'); });
+  document.getElementById('editTypeKou').addEventListener('click', function() { setType('kou'); });
+  document.getElementById('closeEditShiftBtn').addEventListener('click', function() { overlay.remove(); });
+
+  document.getElementById('saveEditShiftBtn').addEventListener('click', function() {
+    const date = document.getElementById('editShiftDate').value;
+    const employee = document.getElementById('editShiftEmployee').value;
+    if (!date) { alert('対象日を選んでください'); return; }
+    if (!employee) { alert('従業員を選択してください'); return; }
+    let title, start, end;
+    if (currentType === 'unav') {
+      const reason = (document.getElementById('editUnavReason').value || '').trim();
+      title = '❌' + employee + (reason ? '（' + reason + '）' : '（終日不可）');
+      start = new Date(date + 'T00:00:00+09:00');
+      end = new Date(date + 'T00:00:00+09:00');
+    } else if (currentType === 'kou') {
+      title = '🏖' + employee + '（公休）';
+      start = new Date(date + 'T00:00:00+09:00');
+      end = new Date(date + 'T00:00:00+09:00');
+    } else {
+      const time = document.getElementById('editShiftStart').value;
+      if (!time) { alert('開始時刻を選んでください'); return; }
+      title = employee;
+      start = new Date(date + 'T' + time + ':00+09:00');
+      end = new Date(start.getTime());
+    }
+
+    updateSyncStatus('シフト更新中...', '#ef6c00');
+    callWebhook({
+      action: 'updateStaffShift',
+      store: currentStore,
+      eventId: item.id,
+      name: title,
+      start: start.toISOString(),
+      end: end.toISOString()
+    }).then(function(resp) {
+      if (!resp || !resp.ok) {
+        updateSyncStatus('⚠ 更新失敗', '#c62828');
+        alert('更新に失敗しました: ' + (resp && resp.error || '不明'));
+        return;
+      }
+      const oldKey = _staffKey(originalDate, currentStore);
+      const newKey = _staffKey(date, currentStore);
+      delete _staffSchedCache[oldKey];
+      delete _staffSchedCache[newKey];
+      const oldD = new Date(originalDate + 'T00:00:00');
+      const newD = new Date(date + 'T00:00:00');
+      delete _staffMonthCalCache[_monthCalKey(currentStore, oldD.getFullYear(), oldD.getMonth() + 1)];
+      delete _staffMonthCalCache[_monthCalKey(currentStore, newD.getFullYear(), newD.getMonth() + 1)];
+      _staffMonthCalState.selectedDate = date;
+      logActivity('✏️ シフト編集', title + ' / ' + originalDate + ' → ' + date, '');
+      overlay.remove();
+      renderStaffMonthCal();
+      renderStaffMonthDayDetail(date);
+      try { renderStaffRail(); } catch (e) {}
+      updateSyncStatus('✓ 更新完了', '#2e7d32');
+      setTimeout(function() { updateSyncStatus(''); }, 3000);
+    }).catch(function(err) {
+      updateSyncStatus('⚠ 更新失敗', '#c62828');
+      alert('通信エラー：' + String(err));
+    });
+  });
 }
 
 // PIN 認証済みフラグ（氏名ごとに記録）
@@ -2866,6 +3223,11 @@ function renderStaffHistoryChips() {
       content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
       return;
     }
+    data.items = (data.items || []).filter(function(it) {
+      const title = String(it.title || it.name || '').trim();
+      return title.indexOf('❌') < 0 && title.indexOf('不可') < 0
+          && title.indexOf('🏖') < 0 && title.indexOf('公休') < 0;
+    });
     if (!data.items || data.items.length === 0) {
       content.innerHTML = '<div class="staff-empty">この月の出勤予定はありません</div>';
       return;
@@ -2934,6 +3296,11 @@ function renderStaffHistoryDetail() {
       content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
       return;
     }
+    data.items = (data.items || []).filter(function(it) {
+      const title = String(it.title || it.name || '').trim();
+      return title.indexOf('❌') < 0 && title.indexOf('不可') < 0
+          && title.indexOf('🏖') < 0 && title.indexOf('公休') < 0;
+    });
     if (!data.items || data.items.length === 0) {
       content.innerHTML = '<div class="staff-empty">この月の勤怠データがありません</div>';
       return;
@@ -3706,7 +4073,7 @@ function renderStaffRail() {
       }
       return '<div class="staff-item' + (hasActual ? ' staff-actual' : '') + '">'
            +   '<span class="staff-time">' + (startOnly ? startOnly + '〜' : '') + '</span>'
-           +   '<span class="staff-name">' + e.name + actualMark + deleteBtn + '</span>'
+           +   '<span class="staff-name">' + escHtml(getStaffDisplayName(e.name)) + actualMark + deleteBtn + '</span>'
            + '</div>';
     }).join('');
 
@@ -3716,7 +4083,7 @@ function renderStaffRail() {
            +   '<div class="staff-unav-header">❌ 本日出られないスタッフ</div>'
            +   unavailable.map(function(u) {
                  return '<div class="staff-unav-item">'
-                      +   '<span class="staff-name">' + u.name + '</span>'
+                      +   '<span class="staff-name">' + escHtml(getStaffDisplayName(u.name)) + '</span>'
                       +   (u.reason ? '<span class="staff-unav-reason">（' + u.reason + '）</span>' : '')
                       + '</div>';
                }).join('')
@@ -3728,7 +4095,7 @@ function renderStaffRail() {
            +   '<div class="staff-unav-header" style="color:#0277bd;">公休</div>'
            +   kouList.map(function(u) {
                  return '<div class="staff-unav-item">'
-                      +   '<span class="staff-name" style="color:#01579b;">' + u.name + '</span>'
+                      +   '<span class="staff-name" style="color:#01579b;">' + escHtml(getStaffDisplayName(u.name)) + '</span>'
                       + '</div>';
                }).join('')
            + '</div>';
