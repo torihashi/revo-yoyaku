@@ -4237,25 +4237,42 @@ function syncFromWebhook(callback) {
 //   - PWAに無いイベントは新規取り込み（簡易パース）
 //   - PWA側で削除されたが GCal にまだあるイベントはそのまま（手動対応）
 // ============================================================
-// カレンダーのイベントタイトルから店舗のコースIDを推定
-function inferCourseFromTitle(title, store) {
+function normalizeCourseTextForMatch(s) {
+  return String(s || '')
+    .replace(/[０-９]/g, function(ch) { return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0); })
+    .replace(/，/g, ',')
+    .replace(/,/g, '')
+    .replace(/\s+/g, '');
+}
+
+// カレンダーのイベントタイトル・説明文から店舗のコースIDを推定
+function inferCourseFromCalendar(title, description, store) {
+  const raw = String(title || '') + '\n' + String(description || '');
+  const text = normalizeCourseTextForMatch(raw);
   const isRevo = store === 'revolverd';
   if (isRevo) {
-    if (title.indexOf('クラフト飲み放題') >= 0 || title.indexOf('クラフト') >= 0) return 'R2';
-    if (title.indexOf('コラボクラフト') >= 0 || title.indexOf('コラボ飲放') >= 0) return 'R4';
-    if (title.indexOf('コラボ') >= 0) return 'R3';
-    if (title.indexOf('リボ飲') >= 0 || title.indexOf('リボ飲み放題') >= 0) return 'R1';
-    if (title.indexOf('女子会') >= 0) return 'R5';
+    if (text.indexOf('クラフト飲み放題') >= 0 || text.indexOf('クラフト') >= 0) return 'R2';
+    if (text.indexOf('コラボクラフト') >= 0 || text.indexOf('コラボ飲放') >= 0) return 'R4';
+    if (text.indexOf('コラボ') >= 0) return 'R3';
+    if (text.indexOf('リボ飲') >= 0 || text.indexOf('リボ飲み放題') >= 0) return 'R1';
+    if (text.indexOf('女子会') >= 0) return 'R5';
     return null; // 不明はnull（既存値維持）
   } else {
-    // 鳥はし：価格＋飲み放題で判定
-    if (title.indexOf('7700') >= 0) return 'E';
-    if (title.indexOf('6600') >= 0) return 'D';
-    if (title.indexOf('5500') >= 0) return 'C';
-    if (title.indexOf('3300') >= 0) return 'B';
-    if (title.indexOf('2200') >= 0) return 'A';
+    // 鳥はし：価格を優先。5,500 のようなカンマ表記や全角数字も normalize 済み。
+    if (text.indexOf('7700円') >= 0 || text.indexOf('7700') >= 0) return 'E';
+    if (text.indexOf('6600円') >= 0 || text.indexOf('6600') >= 0) return 'D';
+    if (text.indexOf('5500円') >= 0 || text.indexOf('5500') >= 0) return 'C';
+    if (text.indexOf('3300円') >= 0 || text.indexOf('3300') >= 0) return 'B';
+    if (text.indexOf('2200円') >= 0 || text.indexOf('2200') >= 0) return 'A';
+    if (/飲み放題|飲放題|飲み放|呑み放題/.test(text)) return 'C';
+    if (/料理のみ|料理コース|料理プラン/.test(text)) return 'A';
     return null;
   }
+}
+
+// 後方互換: 既存呼び出しが残っていても動くようにする
+function inferCourseFromTitle(title, store) {
+  return inferCourseFromCalendar(title, '', store);
 }
 
 // お土産予約の説明文から商品内訳・合計・点数等を復元
@@ -4357,7 +4374,7 @@ function mergeFromCalendar(items) {
       }
       // コースの推定同期（タイトルからキーワードを判定）
       if (existing.type !== 'takeout') {
-        const inferredCourse = inferCourseFromTitle(cleanTitle, existing.store || ev.store);
+        const inferredCourse = inferCourseFromCalendar(cleanTitle, ev.description || '', existing.store || ev.store);
         if (inferredCourse && existing.course !== inferredCourse) {
           existing.course = inferredCourse; changed = true;
         }
@@ -4389,13 +4406,14 @@ function mergeFromCalendar(items) {
       const nameMatch = cleanTitle.match(/([ァ-ヶー一-龯ぁ-んa-zA-Z]+)様/);
       const name = nameMatch ? nameMatch[1] : '不明';
       const isTakeout = cleanTitle.indexOf('🥡') === 0;
+      const inferredCourse = isTakeout ? 'S' : (inferCourseFromCalendar(cleanTitle, ev.description || '', ev.store || 'torihashi') || 'S');
       const newRes = {
         id: 'GC-' + ev.id.substring(0, 10),
         date: evDate, time: evTime,
         people: isTakeout ? 0 : (peopleFromTitle || 2),
         name: name, phone: '',
         kidInfant: 0, kidElementary: 0,
-        course: 'S', seat: '未設定',
+        course: inferredCourse, seat: '未設定',
         notes: '(GCalから自動取込)',
         status: 'confirmed',
         source: source,
