@@ -2566,8 +2566,32 @@ function _fetchStaffMonthDays(state, callback) {
   });
 }
 
-// 月間スタッフカレンダー状態
+// 月間スタッフカレンダー状態 + キャッシュ
 const _staffMonthCalState = { year: null, month: null, data: null };
+// キャッシュ: store|year|month → { byDate, ts }
+const _staffMonthCalCache = {};
+function _monthCalKey(store, year, month) {
+  store = store || currentStore;
+  year  = year  || _staffMonthCalState.year;
+  month = month || _staffMonthCalState.month;
+  return store + '|' + year + '|' + month;
+}
+
+// 楽観的UI：シフトを月間カレンダーキャッシュに即時追加 → 必要なら再描画
+function addOptimisticShiftToMonthCal(dateStr, name, type) {
+  if (!dateStr || !name) return;
+  const d = new Date(dateStr + 'T00:00:00');
+  if (isNaN(d.getTime())) return;
+  const key = _monthCalKey(currentStore, d.getFullYear(), d.getMonth() + 1);
+  if (!_staffMonthCalCache[key]) return; // キャッシュ無しなら次回フェッチで反映
+  const byDate = _staffMonthCalCache[key].byDate;
+  if (!byDate[dateStr]) byDate[dateStr] = [];
+  byDate[dateStr].push({ name: name, type: type || 'work' });
+  // 現在表示中の月なら即座に再描画
+  if (key === _monthCalKey()) {
+    try { _drawStaffMonthCal(byDate); } catch (e) {}
+  }
+}
 
 function changeStaffMonthCal(delta) {
   if (_staffMonthCalState.year == null) {
@@ -2595,13 +2619,23 @@ function renderStaffMonthCal() {
   // どの店舗のカレンダーか表示
   const storeLabel = document.getElementById('staffMonthCalStoreLabel');
   if (storeLabel) storeLabel.textContent = currentStore === 'revolverd' ? '【🥃 リボ・バイト】' : '【🐔 鳥はし・バイト】';
-  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>';
+
+  // ★ キャッシュがあれば即時表示（待ち時間ゼロ）
+  const key = _monthCalKey();
+  if (_staffMonthCalCache[key]) {
+    try { _drawStaffMonthCal(_staffMonthCalCache[key].byDate); } catch (e) {}
+  } else {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>';
+  }
 
   if (!isWebhookConfigured()) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">Webhook未設定</div>';
+    if (!_staffMonthCalCache[key]) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">Webhook未設定</div>';
+    }
     return;
   }
 
+  // ★ 裏で最新データをフェッチして差分更新
   const url = WEBHOOK_URL
     + '?action=listStaffMonth'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
@@ -2610,12 +2644,21 @@ function renderStaffMonthCal() {
     + '&month=' + _staffMonthCalState.month;
   fetch(url).then(function(r) { return r.json(); }).then(function(resp) {
     if (!resp || !resp.ok) {
-      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:#c62828;">取得失敗：' + (resp && resp.error || '不明') + '</div>';
+      if (!_staffMonthCalCache[key]) {
+        grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:#c62828;">取得失敗：' + (resp && resp.error || '不明') + '</div>';
+      }
       return;
     }
-    _drawStaffMonthCal(resp.byDate || {});
+    // キャッシュ更新
+    _staffMonthCalCache[key] = { byDate: resp.byDate || {}, ts: Date.now() };
+    // まだ同じ月を表示中なら再描画
+    if (key === _monthCalKey()) {
+      try { _drawStaffMonthCal(resp.byDate || {}); } catch (e) {}
+    }
   }).catch(function(err) {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:#c62828;">通信エラー</div>';
+    if (!_staffMonthCalCache[key]) {
+      grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:#c62828;">通信エラー</div>';
+    }
   });
 }
 
@@ -3337,6 +3380,9 @@ function openStaffShiftModal() {
         end: endDate.toISOString()
       };
       optimisticAddStaffShift(d, currentStore, optimisticItem);
+      // ★ 月間カレンダーキャッシュにも即時追加（楽観的UI）
+      const calType = currentType === 'unav' ? 'unav' : currentType === 'kou' ? 'kou' : 'work';
+      addOptimisticShiftToMonthCal(d, name, calType);
       const logActionLabel = currentType === 'unav' ? '❌ 出勤不可登録'
                            : currentType === 'kou'  ? '🏖 公休登録'
                            :                          '👥 シフト登録';
@@ -3366,8 +3412,25 @@ function openStaffShiftModal() {
 
     try { renderStaffRail(); } catch (e) {}
 
+    // ★ 楽観UIで即座に月間カレンダー再描画（保存前なので超高速）
+    try {
+      const key = _monthCalKey();
+      if (_staffMonthCalCache[key]) _drawStaffMonthCal(_staffMonthCalCache[key].byDate);
+    } catch (e) {}
+
     Promise.all(promises).then(function() {
       try { renderStaffRail(); } catch (e) {}
+      // ★ サーバー結果を取りに行ってキャッシュ更新＋月間カレンダーを最新化
+      try {
+        // 関連月だけキャッシュを無効化して renderStaffMonthCal で再フェッチ
+        const months = new Set();
+        dates.forEach(function(d) {
+          const dt = new Date(d + 'T00:00:00');
+          months.add(currentStore + '|' + dt.getFullYear() + '|' + (dt.getMonth() + 1));
+        });
+        months.forEach(function(k) { delete _staffMonthCalCache[k]; });
+        if (typeof renderStaffMonthCal === 'function') renderStaffMonthCal();
+      } catch (e) {}
       if (ng === 0) {
         updateSyncStatus('✓ ' + ok + '件 完了', '#2e7d32');
       } else if (ok === 0) {
