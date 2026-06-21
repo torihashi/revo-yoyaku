@@ -1686,16 +1686,16 @@ select.time-select option:disabled { color: #aaa; }
   </div>
 
   <div class="field">
+    <label>お名前（カタカナ）<span class="req">*</span></label>
+    <input type="text" id="custName" placeholder="例：ヤマダタロウ" inputmode="text" enterkeyhint="next" />
+    <div class="hint">カタカナで入力（ひらがなは自動変換）</div>
+  </div>
+
+  <div class="field">
     <label>お電話番号<span class="req">*</span></label>
     <input type="tel" id="custPhone" inputmode="numeric" pattern="[0-9]*" enterkeyhint="next" placeholder="例：09012345678" autocomplete="tel" />
     <div class="hint">半角数字で入力（変換不要）</div>
     <div class="repeat-hint" id="repeatHint"></div>
-  </div>
-
-  <div class="field">
-    <label>お名前（カタカナ）<span class="req">*</span></label>
-    <input type="text" id="custName" placeholder="例：ヤマダタロウ" inputmode="text" enterkeyhint="next" />
-    <div class="hint">カタカナで入力（ひらがなは自動変換）</div>
   </div>
 
   <div class="field">
@@ -5240,6 +5240,14 @@ window.addEventListener('DOMContentLoaded', () => {
   setupPhoneInput('custPhone', 'custName', 'repeatHint');
   setupPhoneInput('takeoutPhone', 'takeoutName', null);
 
+  function focusAndReveal(el, block) {
+    if (!el) return;
+    try { el.scrollIntoView({ behavior: 'smooth', block: block || 'center' }); } catch (e) {}
+    setTimeout(function() {
+      try { el.focus({ preventScroll: true }); } catch (e) { try { el.focus(); } catch (_) {} }
+    }, 180);
+  }
+
   // 1) 日付変更で人数ステッパーへスクロール
   var dateInput = document.getElementById('resDate');
   if (dateInput) {
@@ -5252,22 +5260,48 @@ window.addEventListener('DOMContentLoaded', () => {
   // 3) 名前入力で Enter → 電話番号へフォーカス
   var nameInputForFocus = document.getElementById('custName');
   if (nameInputForFocus) {
+    var nameAutoTimer = null;
+    function maybeAdvanceNameToPhone() {
+      clearTimeout(nameAutoTimer);
+      nameAutoTimer = setTimeout(function() {
+        if (document.activeElement !== nameInputForFocus) return;
+        if ((nameInputForFocus.value || '').trim().length < 2) return;
+        focusAndReveal(document.getElementById('custPhone'));
+      }, 650);
+    }
+    nameInputForFocus.addEventListener('input', function(e) {
+      if (e.isComposing) return;
+      maybeAdvanceNameToPhone();
+    });
+    nameInputForFocus.addEventListener('compositionend', maybeAdvanceNameToPhone);
     nameInputForFocus.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
         var phone = document.getElementById('custPhone');
-        if (phone) phone.focus();
+        focusAndReveal(phone);
       }
     });
   }
-  // 電話番号入力で Enter → 次（席ヒアリング）へ
+  // 電話番号入力 → コース選択へ
   var phoneInput = document.getElementById('custPhone');
   if (phoneInput) {
+    var phoneAutoMoved = false;
+    phoneInput.addEventListener('input', function() {
+      var digits = (phoneInput.value || '').replace(/[^\d]/g, '');
+      if (!phoneAutoMoved && digits.length >= 9) {
+        phoneAutoMoved = true;
+        setTimeout(function() {
+          var coursesLabel = document.getElementById('courseGrid');
+          if (coursesLabel) coursesLabel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 180);
+      }
+      if (digits.length < 9) phoneAutoMoved = false;
+    });
     phoneInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
         var coursesLabel = document.getElementById('courseGrid');
-        if (coursesLabel) coursesLabel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (coursesLabel) coursesLabel.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     });
   }
@@ -5681,7 +5715,15 @@ function proceedToStep2() {
   renderCourseGrid();
   // step2 の人数フィールドを同期
   syncStep2People();
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  setTimeout(function() {
+    const nameInput = document.getElementById('custName');
+    if (nameInput) {
+      try { nameInput.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {}
+      setTimeout(function() {
+        try { nameInput.focus({ preventScroll: true }); } catch (e) { try { nameInput.focus(); } catch (_) {} }
+      }, 180);
+    }
+  }, 80);
 }
 
 // step2 の人数表示と入力を state.people に同期
