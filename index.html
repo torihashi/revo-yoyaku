@@ -258,6 +258,14 @@ button.secondary:active { background: var(--primary); color: white; }
 .ri-summary .ri-status-mini.tentative {
   background: var(--warning-bg); color: var(--warning);
 }
+/* ★ Claude (2026-06-21): 特記事項あり目印アイコン。控えめな黄色背景＋📝で他のバッジとの区別を付ける */
+.ri-summary .ri-notes-icon {
+  font-size: 12px; line-height: 1;
+  background: #fff8e1; color: #8d6e63;
+  padding: 2px 5px; border-radius: 6px;
+  border: 1px solid #ffe082;
+  flex-shrink: 0; cursor: help;
+}
 .ri-summary .ri-expand {
   color: var(--muted); font-size: 14px;
   transition: transform .2s; flex-shrink: 0;
@@ -4280,6 +4288,47 @@ function inferCourseFromTitle(title, store) {
   return inferCourseFromCalendar(title, '', store);
 }
 
+// ★ Claude (2026-06-21): HTML属性値用のエスケープヘルパー。tooltip(title属性)に notes を入れる際に使用。
+function escapeAttr(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+// ★ Claude (2026-06-21): 通常予約のカレンダー説明文から特記事項を復元するヘルパー。
+//   - PWA直接作成   : `特記: …`
+//   - Yahoo!/AutoReserve取込（GAS側 integrated-import.gs）: `要望: …` / `アレルギー: …` / `お子様: …`
+//   これらが揃って `r.notes` に入るよう統合し、空 or "なし" は除外。複数行は ' / ' で結合する。
+function parseNotesFromDescription(desc) {
+  if (!desc) return '';
+  const out = [];
+  const lines = String(desc).split('\n');
+  const keyLabels = [
+    { key: /^(?:特記)[：:]\s*/,       label: ''         },
+    { key: /^(?:要望)[：:]\s*/,       label: '要望: '   },
+    { key: /^(?:アレルギー)[：:]\s*/, label: 'アレルギー: ' },
+    { key: /^(?:お子様)[：:]\s*/,     label: 'お子様: ' }
+  ];
+  lines.forEach(function(raw) {
+    const line = (raw || '').trim();
+    if (!line) return;
+    for (let i = 0; i < keyLabels.length; i++) {
+      const m = keyLabels[i];
+      if (m.key.test(line)) {
+        const v = line.replace(m.key, '').trim();
+        // "なし" や空欄、"(GCalから自動取込)" などは除外
+        if (!v || v === 'なし' || /^\(GCalから自動取込\)$/.test(v)) return;
+        out.push(m.label + v);
+        return;
+      }
+    }
+  });
+  return out.join(' / ');
+}
+
 // お土産予約の説明文から商品内訳・合計・点数等を復元
 function parseTakeoutDescription(desc) {
   const out = { entries: [], total: 0, count: 0, phone: '', notes: '', summary: '' };
@@ -4383,6 +4432,18 @@ function mergeFromCalendar(items) {
         if (inferredCourse && existing.course !== inferredCourse) {
           existing.course = inferredCourse; changed = true;
         }
+        // ★ Claude (2026-06-21): 特記事項（特記/要望/アレルギー/お子様）をカレンダーから復元。
+        //   - 端末A で編集した特記が、再同期した端末B にも反映されるよう毎回更新する。
+        //   - 元々空 で取り込んだ「(GCalから自動取込)」のような placeholder は維持しない。
+        const incomingNotes = parseNotesFromDescription(ev.description || '');
+        const currentNotes  = existing.notes || '';
+        // placeholder のみ持っている既存予約は上書き、それ以外も差分があれば更新
+        const isPlaceholder = currentNotes === '(GCalから自動取込)';
+        if (incomingNotes && incomingNotes !== currentNotes) {
+          existing.notes = incomingNotes; changed = true;
+        } else if (!incomingNotes && isPlaceholder) {
+          existing.notes = ''; changed = true;
+        }
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
       if (existing.time !== evTime)  { existing.time = evTime; changed = true; }
@@ -4412,6 +4473,9 @@ function mergeFromCalendar(items) {
       const name = nameMatch ? nameMatch[1] : '不明';
       const isTakeout = cleanTitle.indexOf('🥡') === 0;
       const inferredCourse = isTakeout ? 'S' : (inferCourseFromCalendar(cleanTitle, ev.description || '', ev.store || 'torihashi') || 'S');
+      // ★ Claude (2026-06-21): 新規取込時は description から特記事項を復元してセット。
+      //   見つからなければ空文字（プレースホルダ"(GCalから自動取込)"はリスト表示で本物の特記と区別しづらいので排除）。
+      const parsedNotes = parseNotesFromDescription(ev.description || '');
       const newRes = {
         id: 'GC-' + ev.id.substring(0, 10),
         date: evDate, time: evTime,
@@ -4419,7 +4483,7 @@ function mergeFromCalendar(items) {
         name: name, phone: '',
         kidInfant: 0, kidElementary: 0,
         course: inferredCourse, seat: '未設定',
-        notes: '(GCalから自動取込)',
+        notes: parsedNotes,
         status: 'confirmed',
         source: source,
         store: ev.store || 'torihashi',
@@ -7288,6 +7352,10 @@ function renderReservationList() {
       // ====== お土産予約（有効）：折りたたみ表示 ======
       if (r.type === 'takeout') {
         const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+        // ★ Claude (2026-06-21): 特記事項があれば小アイコンで可視化
+        const notesIcon = (r.notes && String(r.notes).trim())
+          ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+          : '';
         // 商品概要を1〜2品目だけ抜粋
         const firstItems = (r.entries && r.entries.length > 0)
           ? r.entries.slice(0, 2).map(function(e) { return e.name + '×' + e.qty; }).join(',')
@@ -7301,6 +7369,7 @@ function renderReservationList() {
           +     '<span class="ri-name">' + r.name + '様</span>'
           +     '<span class="ri-takeout-info">' + firstItems + '</span>'
           +     '<span class="ri-course-mini drink">' + (r.total || 0).toLocaleString() + '円</span>'
+          +     notesIcon
           +     statusTag
           +     '<span class="ri-expand">▾</span>'
           +   '</div>'
@@ -7349,6 +7418,10 @@ function renderReservationList() {
         miniCourseHtml = '<span class="ri-course-mini seat-only">席のみ</span>';
       }
       const nameWithMark = (sourceMark ? '<span title="' + sourceTitle + '" style="margin-right:3px">' + sourceMark + '</span>' : '') + r.name + '様';
+      // ★ Claude (2026-06-21): 特記事項があれば小アイコンを表示。tooltip(title属性)に本文を入れて長押し/ホバーで確認可能。
+      const notesIcon = (r.notes && String(r.notes).trim())
+        ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+        : '';
       return ''
         + '<div class="reservation-item active" data-rid="' + r.id + '">'
         +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
@@ -7357,6 +7430,7 @@ function renderReservationList() {
         +     '<span class="ri-name">' + nameWithMark + '</span>'
         +     miniCourseHtml
         +     seatMini
+        +     notesIcon
         +     statusTag
         +     '<span class="ri-expand">▾</span>'
         +   '</div>'
