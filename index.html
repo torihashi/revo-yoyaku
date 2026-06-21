@@ -8117,11 +8117,26 @@ function renderCalendarGrid(container, animDirection) {
         else if (r.type === 'takeout')     chipCls += ' takeout';
         else if (r.source === 'yahoo')     chipCls += ' src-yahoo';
         else if (r.source === 'autoreserve') chipCls += ' src-autoreserve';
-        // 表示テキスト: 時刻 + 名前（人数）
-        const tm = (r.time || '').replace(/^0/, ''); // "09:00" → "9:00"
         const nm = r.name || '';
-        const txt = (r.type === 'takeout' ? '🥡' : tm) + ' ' + nm;
-        chipsHtml += '<div class="' + chipCls + '" title="' + escapeAttr(tm + ' ' + nm + (r.people ? ' / ' + r.people + '名' : '')) + '">'
+        const peopleText = r.people ? (r.people + '名') : '';
+        let txt = '';
+        if (r.type === 'takeout') {
+          txt = '🥡 ' + nm;
+        } else {
+          const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+          const isSeatOnly = !course || !course.type || course.type === '席だけ' || course.type === '席のみ' || course.id === 'S' || course.id === 'RS';
+          if (isSeatOnly) {
+            txt = (peopleText ? peopleText + ' ' : '') + nm;
+          } else {
+            const label = course.shortName || course.name || course.type || r.course;
+            txt = (peopleText ? peopleText + ' ' : '') + label;
+          }
+        }
+        const tooltip = (r.time ? r.time + ' ' : '') + nm
+          + (peopleText ? ' / ' + peopleText : '')
+          + (r.seat ? ' / ' + compactSeat(r.seat) : '')
+          + (r.course ? ' / ' + r.course : '');
+        chipsHtml += '<div class="' + chipCls + '" title="' + escapeAttr(tooltip) + '">'
                    + escapeAttr(txt) + '</div>';
       });
       if (hidden > 0) {
