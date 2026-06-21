@@ -1940,8 +1940,6 @@ select.time-select option:disabled { color: #aaa; }
 <!-- ============================================ -->
 <section id="tab-staff" class="hidden">
   <div class="card">
-    <h2>👥 バイト管理</h2>
-    <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">月間カレンダー・シフト追加・各バイトシフト一覧・月間労働集計</div>
     <button class="primary" style="margin-top:0;margin-bottom:10px;" onclick="openStaffShiftModal()">＋ シフト追加（複数日対応）</button>
 
     <!-- 月間カレンダー（出勤・休みを日ごとに俯瞰） -->
@@ -1954,9 +1952,6 @@ select.time-select option:disabled { color: #aaa; }
           <button type="button" class="hist-nav" onclick="changeStaffMonthCal(1)">›</button>
           <button type="button" onclick="renderStaffMonthCal()" title="再読込" style="font-size:11px;padding:4px 8px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄</button>
         </div>
-      </div>
-      <div style="font-size:10.5px;color:var(--muted);margin-bottom:5px;">
-        <span>出勤（黒）</span>　<span style="color:#c62828;font-weight:700;">不可（赤）</span>　<span style="color:#0288d1;font-weight:700;">公休（水色）</span>　<span style="background:#c8201d;color:white;padding:0 4px;border-radius:3px;font-weight:700;">店舗休業</span>
       </div>
       <div id="staffMonthCalGrid" class="staff-month-grid">
         <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>
@@ -3109,13 +3104,39 @@ function _drawStaffMonthCal(byDate) {
     dayEl.addEventListener('click', function() {
       _staffMonthCalState.selectedDate = dayEl.getAttribute('data-date') || '';
       _drawStaffMonthCal(byDate);
+      scrollAfterCalendarDateTap('staffMonthCalGrid');
     });
   });
+  bindStaffMonthSwipe(grid);
   if (_staffMonthCalState.selectedDate) {
     const selectedMonth = _staffMonthCalState.selectedDate.slice(0, 7);
     const currentMonth = y + '-' + String(m + 1).padStart(2,'0');
     if (selectedMonth === currentMonth) renderStaffMonthDayDetail(_staffMonthCalState.selectedDate);
   }
+}
+
+function bindStaffMonthSwipe(grid) {
+  if (!grid || grid._staffSwipeBound) return;
+  grid._staffSwipeBound = true;
+  let touchStartX = 0;
+  let touchStartY = 0;
+  let touchStarted = false;
+  grid.addEventListener('touchstart', function(e) {
+    if (e.touches.length !== 1) return;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
+    touchStarted = true;
+  }, { passive: true });
+  grid.addEventListener('touchend', function(e) {
+    if (!touchStarted) return;
+    touchStarted = false;
+    const touch = e.changedTouches[0];
+    const dx = touch.clientX - touchStartX;
+    const dy = touch.clientY - touchStartY;
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+      changeStaffMonthCal(dx < 0 ? 1 : -1);
+    }
+  }, { passive: true });
 }
 
 function bindLongPress(el, onLongPress) {
@@ -8084,6 +8105,22 @@ function updateDateInputAndCal(inputId, dateStr) {
   });
 }
 
+function scrollAfterCalendarDateTap(inputId) {
+  const targetMap = {
+    listDate: 'reservationList',
+    smDate: 'unassignedRail',
+    staffMonthCalGrid: 'staffMonthDayDetail'
+  };
+  const targetId = targetMap[inputId];
+  const target = targetId ? document.getElementById(targetId) : null;
+  if (!target) return;
+  setTimeout(function() {
+    const headerOffset = 46;
+    const y = target.getBoundingClientRect().top + window.pageYOffset - headerOffset;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  }, 80);
+}
+
 // 全タブの日付入力＋カレンダーを一括同期
 function syncDateAcrossTabs(dateStr) {
   if (!dateStr) return;
@@ -8267,6 +8304,7 @@ function renderCalendarGrid(container, animDirection) {
       }
       // 選択ハイライトのために再描画
       renderCalendarGrid(container);
+      scrollAfterCalendarDateTap(inputId);
     });
   });
 
