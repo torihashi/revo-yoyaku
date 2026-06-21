@@ -3085,7 +3085,7 @@ function _drawStaffMonthCal(byDate) {
     }
     unavs.forEach(function(it) {
       inner += '<span class="smc-unav" title="不可：' + escHtml(it.name) + (it.reason ? '（' + escHtml(it.reason) + '）' : '') + '">'
-            +    escHtml(getStaffDisplayName(it.name)) + '休み'
+            +    '❌' + escHtml(getStaffDisplayName(it.name))
             +  '</span>';
     });
     kous.forEach(function(it) {
