@@ -503,6 +503,13 @@ button.secondary:active { background: var(--primary); color: white; }
 .seat .occ-time { font-weight: 700; color: #b71c1c; font-size: 10px; }
 .seat .occ-course { color: #555; font-size: 8.5px; line-height: 1.1; }
 .seat .occ-name { color: var(--text); font-size: 9px; }
+/* ★ Claude (2026-06-21): 同一席に複数時間帯の予約があるとき占有タイル下に表示する追加件数バッジ */
+.seat .occ-more {
+  display: inline-block; margin-top: 2px;
+  font-size: 9px; font-weight: 700; color: #fff;
+  background: #000; padding: 1px 5px; border-radius: 8px;
+  align-self: center;
+}
 /* リボ（緑系busy）に合わせて時刻を緑に */
 .revo-seat-layout .seat.busy .occ { background: rgba(255,255,255,0.92); }
 .revo-seat-layout .seat .occ-time { color: #1b5e20; }
@@ -1685,10 +1692,8 @@ select.time-select option:disabled { color: #aaa; }
       <input type="date" id="smDate" />
     </div>
     <div class="cal-grid-wrap" data-target="smDate" data-onchange="onSmDateChange"></div>
-    <div class="field">
-      <label>時間帯</label>
-      <select id="smTime" style="width:100%"></select>
-    </div>
+    <!-- ★ Claude (2026-06-21): 時間帯セレクタは削除。全時間帯の予約を統合表示し、
+         同一席に複数時間帯の予約がある席は .multi-time クラスで太点線囲いにする。 -->
     <div style="margin-bottom:10px">
       <button id="refreshBtnSm" class="refresh-btn" onclick="pullFromCalendar()" style="width:100%;justify-content:center">🔄 カレンダーから取得</button>
       <div id="lastSyncTimeSm" class="last-sync-time" style="display:block;margin-top:4px;text-align:center">最終同期：未同期</div>
@@ -7390,6 +7395,7 @@ let smState = {
   initialized: false
 };
 
+// ★ Claude (2026-06-21): 時間帯セレクタ廃止により現在未参照。将来「時間帯ハイライト」等で再利用する余地があるため保留。
 const SM_TIME_SLOTS = [
   '17:00','17:30','18:00','18:30','19:00','19:30',
   '20:00','20:30','21:00','21:30','22:00'
@@ -7399,7 +7405,9 @@ function initSeatMap() {
   if (!smState.initialized) {
     // 初回のみセットアップ
     const dateInp = document.getElementById('smDate');
-    const timeSel = document.getElementById('smTime');
+    // ★ Claude (2026-06-21): 座席表の時間帯セレクタは廃止。
+    //   smTime の SELECT 自体を HTML から消したため、ここでも初期化しない。
+    //   後方互換のため smState.time は handleSeatClick の新規予約フローの初期時刻として残す（'18:00'相当）。
     const listDate = document.getElementById('listDate');
     // 一覧側の日付と同期（既に値があればそちら優先）
     const initialDate = (listDate && listDate.value) || state.date || todayStr();
@@ -7411,19 +7419,6 @@ function initSeatMap() {
         if (listDate) listDate.value = e.target.value;
         renderSeatMap();
         renderReservationList();
-      });
-    }
-    if (timeSel) {
-      timeSel.innerHTML = '';
-      SM_TIME_SLOTS.forEach(function(t) {
-        const o = document.createElement('option');
-        o.value = t; o.textContent = t;
-        if (t === smState.time) o.selected = true;
-        timeSel.appendChild(o);
-      });
-      timeSel.addEventListener('change', function(e) {
-        smState.time = e.target.value;
-        renderSeatMap();
       });
     }
     smState.date = dateInp ? dateInp.value : todayStr();
@@ -7458,32 +7453,23 @@ function renderSeatMap() {
 }
 function _renderSeatMapImpl() {
   const date = smState.date;
-  const time = smState.time;
   // 当日の有効予約（キャンセル除外、お土産除外）— 現在の店舗のみ
   const dayRes = reservations.filter(function(r) {
     if ((r.store || 'torihashi') !== currentStore) return false;
     return r.date === date && r.status !== 'cancelled' && r.type !== 'takeout';
   });
-  // 時間帯重複の予約（±60分）
-  const overlap = dayRes.filter(function(r) {
-    return Math.abs(timeDiff(r.time, time)) <= 60;
-  });
 
-  // 全予約から使用中の卓を集計（時間帯重複のみ）
-  const busyMap = {};
-  overlap.forEach(function(r) {
-    expandSeat(r.seat).forEach(function(t) {
-      if (!busyMap[t]) busyMap[t] = r;
-    });
-  });
-  // 当日どこかで予約あり（時間帯外も）の卓 & 同日複数予約の卓
-  const hasBooking = {};
-  const seatReservationCount = {};
+  // ★ Claude (2026-06-21): 時間帯セレクタ廃止に伴い、busyMap も当日の "全" 予約から作る。
+  //   席ごとに「使用中の予約リスト」を保持し、時刻昇順でソート。表示は最も早い予約を主に出し、
+  //   複数予約がある席（=multi-time）は太点線で囲い、占有タイル右上に「+N件」を表示する。
+  const seatResList = {}; // seat token → reservation[]
   dayRes.forEach(function(r) {
     expandSeat(r.seat).forEach(function(t) {
-      hasBooking[t] = true;
-      seatReservationCount[t] = (seatReservationCount[t] || 0) + 1;
+      (seatResList[t] = seatResList[t] || []).push(r);
     });
+  });
+  Object.keys(seatResList).forEach(function(t) {
+    seatResList[t].sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
   });
 
   // 各席要素を更新
@@ -7493,42 +7479,35 @@ function _renderSeatMapImpl() {
     el.querySelectorAll('.occ').forEach(function(o) { o.remove(); });
     el.innerHTML = getSeatDisplayLabel(seatId);
 
-    // セルが「R1+R2」のような結合席の場合、構成卓トークンも調べる
+    // セルが「R1+R2」のような結合席の場合、構成卓トークンも含めてその席の予約をマージ
     const cellTokens = (typeof expandSeat === 'function') ? expandSeat(seatId) : [seatId];
-    // 直接一致 or 構成卓のどれかが使用中／予約あり、を判定
-    let busyRes = busyMap[seatId];
-    if (!busyRes) {
-      for (let i = 0; i < cellTokens.length; i++) {
-        if (busyMap[cellTokens[i]]) { busyRes = busyMap[cellTokens[i]]; break; }
-      }
-    }
-    let cellHasBooking = hasBooking[seatId];
-    if (!cellHasBooking) {
-      cellHasBooking = cellTokens.some(function(t) { return hasBooking[t]; });
-    }
-    let cellResCount = seatReservationCount[seatId] || 0;
-    cellTokens.forEach(function(t) {
-      if (t !== seatId && seatReservationCount[t]) {
-        cellResCount = Math.max(cellResCount, seatReservationCount[t]);
-      }
-    });
+    const seenIds = {};
+    const mergedRes = [];
+    const collect = function(arr) {
+      (arr || []).forEach(function(r) {
+        if (!seenIds[r.id]) { seenIds[r.id] = true; mergedRes.push(r); }
+      });
+    };
+    collect(seatResList[seatId]);
+    cellTokens.forEach(function(t) { if (t !== seatId) collect(seatResList[t]); });
+    mergedRes.sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
 
-    if (busyRes) {
+    if (mergedRes.length > 0) {
       el.classList.add('busy');
-      const r = busyRes;
+      const r = mergedRes[0]; // 最も早い時間の予約を主表示
       const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
       const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
+      const extra = mergedRes.length - 1; // 同一席の追加予約件数
       const occ = document.createElement('div');
       occ.className = 'occ';
       occ.innerHTML = '<span class="occ-time">' + (r.time || '') + '</span>'
                    + (courseShort ? '<span class="occ-course">' + courseShort + '</span>' : '')
-                   + '<span class="occ-name">' + r.name + (r.people ? '/' + r.people : '') + '</span>';
+                   + '<span class="occ-name">' + r.name + (r.people ? '/' + r.people : '') + '</span>'
+                   + (extra > 0 ? '<span class="occ-more">+' + extra + '件</span>' : '');
       el.appendChild(occ);
-    } else if (cellHasBooking) {
-      el.classList.add('has-booking');
     }
-    // 同日に複数の予約が入っている席 → 黒太点線
-    if (cellResCount >= 2) {
+    // 同日に複数の予約が入っている席 → 黒太点線（時間が違っても警告として可視化）
+    if (mergedRes.length >= 2) {
       el.classList.add('multi-time');
     }
     // クリックハンドラ
@@ -7729,29 +7708,38 @@ function handleSeatClick(seatId) {
     cancelMoveMode();
     return;
   }
-  // 該当時間で使用中なら → その予約を移動モード対象に（現店舗のみ）
+  // ★ Claude (2026-06-21): 時間帯セレクタ廃止により、当日のその席のすべての予約から候補を集める。
+  //   - 0件: 空席として新規予約フローへ
+  //   - 1件: その予約を移動モード対象に
+  //   - 2件以上: ピッカーを出して、ユーザーが対象予約を選ぶ
   const date = smState.date;
-  const time = smState.time;
+  const time = smState.time; // 新規予約フロー用のデフォルト時刻として残置（'18:00' 既定）
   const dayRes = reservations.filter(function(r) {
     return (r.store || 'torihashi') === currentStore
         && r.date === date && r.status !== 'cancelled' && r.type !== 'takeout';
   });
   // 結合セル（R1+R2など）にも対応：セルのトークン展開と予約席のトークン展開が交差するか確認
   const cellTokens = expandSeat(seatId);
-  const r = dayRes.find(function(x) {
-    if (Math.abs(timeDiff(x.time, time)) > 60) return false;
+  const matching = dayRes.filter(function(x) {
     if (x.seat === seatId) return true; // 直接一致
     const resTokens = expandSeat(x.seat);
     // 予約席のいずれかのトークンがセルに含まれる、または逆
     return resTokens.some(function(t) { return cellTokens.indexOf(t) >= 0; })
         || cellTokens.some(function(t) { return resTokens.indexOf(t) >= 0; });
-  });
-  if (r) {
+  }).sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
+
+  if (matching.length === 1) {
+    const r = matching[0];
     smState.moveResId = r.id;
     document.getElementById('moveBanner').classList.add('show');
     document.querySelectorAll('#seatLayoutTori .seat[data-seat="' + seatId + '"], #seatLayoutRevo .seat[data-seat="' + seatId + '"]').forEach(function(s) {
       s.classList.add('in-move');
     });
+    return;
+  }
+  if (matching.length >= 2) {
+    // 複数予約 → どれを操作するかピッカー表示
+    showSeatReservationPicker(seatId, matching);
     return;
   }
   // 空席 → 確認なしで即座に新規予約フローへ
@@ -7770,6 +7758,64 @@ function handleSeatClick(seatId) {
   // プリセット席バナー表示 ＋ 自動で空き判定 ＋ 名前欄フォーカス
   updatePreselectBanner();
   autoAdvanceFromSeatMap();
+}
+
+// ★ Claude (2026-06-21): 同一席に複数時間帯の予約がある場合のピッカーモーダル。
+//   座席表で席をタップ → 該当する全予約を時刻順で並べ、ユーザーがどの予約を「移動モードの対象」にするか選ぶ。
+function showSeatReservationPicker(seatId, list) {
+  // 既存のピッカーがあれば閉じる
+  const existing = document.getElementById('seatResPicker');
+  if (existing) existing.remove();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'seatResPicker';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:12px;padding:16px;max-width:360px;width:100%;max-height:80vh;overflow:auto;box-shadow:0 10px 30px rgba(0,0,0,0.3);';
+
+  const title = document.createElement('div');
+  title.style.cssText = 'font-weight:700;font-size:16px;margin-bottom:8px;';
+  title.textContent = '席「' + (getSeatDisplayLabel(seatId) || seatId) + '」の予約を選択';
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:12px;color:#666;margin-bottom:12px;';
+  hint.textContent = '同一席に' + list.length + '件の予約があります。操作したい予約をタップしてください。';
+
+  box.appendChild(title);
+  box.appendChild(hint);
+
+  list.forEach(function(r) {
+    const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
+    const btn = document.createElement('button');
+    btn.style.cssText = 'display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:8px;border:1px solid #ddd;border-radius:8px;background:#fafafa;cursor:pointer;font-size:14px;';
+    btn.innerHTML = '<div style="font-weight:700;color:#b71c1c;">' + (r.time || '') + '　'
+                  + '<span style="color:#222;">' + r.name + '</span>'
+                  + (r.people ? '<span style="color:#666;font-weight:400;"> / ' + r.people + '名</span>' : '')
+                  + '</div>'
+                  + (courseShort ? '<div style="font-size:12px;color:#555;margin-top:2px;">コース: ' + courseShort + '</div>' : '');
+    btn.onclick = function() {
+      overlay.remove();
+      smState.moveResId = r.id;
+      const banner = document.getElementById('moveBanner');
+      if (banner) banner.classList.add('show');
+      document.querySelectorAll('#seatLayoutTori .seat[data-seat="' + seatId + '"], #seatLayoutRevo .seat[data-seat="' + seatId + '"]').forEach(function(s) {
+        s.classList.add('in-move');
+      });
+    };
+    box.appendChild(btn);
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.style.cssText = 'display:block;width:100%;padding:10px;margin-top:4px;border:none;border-radius:8px;background:#eee;color:#333;cursor:pointer;font-size:14px;';
+  closeBtn.textContent = 'キャンセル';
+  closeBtn.onclick = function() { overlay.remove(); };
+  box.appendChild(closeBtn);
+
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 }
 
 // 日付入力欄＆対応するインラインカレンダーを一括更新するヘルパー
