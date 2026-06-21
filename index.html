@@ -1262,14 +1262,14 @@ select.time-select option:disabled { color: #aaa; }
 .cal-grid-wrap[data-mode="events"] .cal-day,
 .cal-grid-wrap[data-mode="events"] .cal-day-blank {
   aspect-ratio: auto;
-  min-height: 88px;
+  min-height: 112px;
   flex-direction: column;
   align-items: stretch; justify-content: flex-start;
-  padding: 3px 3px 4px;
+  padding: 3px 2px 4px;
   font-size: 11px; font-weight: 600;
-  background: #fafafa;
-  border: 1px solid #eee;
-  border-radius: 5px;
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
   overflow: hidden;
   text-align: left;
 }
@@ -1302,25 +1302,40 @@ select.time-select option:disabled { color: #aaa; }
   background: #fff5f5;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-events {
-  display: flex; flex-direction: column; gap: 1.5px;
+  display: flex; flex-direction: column; gap: 2px;
   overflow: hidden;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip {
-  font-size: 9.5px; line-height: 1.15;
-  padding: 1.5px 4px;
+  display: block;
+  width: 100%;
+  min-height: 16px;
+  font-size: 10.5px; line-height: 1.15;
+  padding: 2px 4px;
   border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-weight: 600;
-  color: #1b5e20;
-  background: #c8e6c9; /* PWA直接=緑系（スクショに合わせる） */
+  font-weight: 700;
+  color: #087a45;
+  background: #dff7ec;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.seat-only {
+  background: #d9f7e7; color: #0f8f55;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.meal {
+  background: #e5f7ef; color: #14a36a;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.drink {
+  background: #c9f0dd; color: #08a05f;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.premium {
+  background: #f0e7ff; color: #8e5ad8;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.src-yahoo {
-  background: #ffcdd2; color: #b71c1c; /* Yahoo=赤系 */
+  border-left: 2px solid #ef5350;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.src-autoreserve {
-  background: #bbdefb; color: #0d47a1; /* AutoReserve=青系 */
+  border-left: 2px solid #42a5f5;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.takeout {
   background: #ffe0b2; color: #e65100; /* お土産=橙系 */
@@ -8107,7 +8122,7 @@ function renderCalendarGrid(container, animDirection) {
     if (isEvents) {
       // 日付番号 + その日の予約チップ
       const dayList = monthRes[dateStr] || [];
-      const maxChips = 5; // 6個目以降は "+N" で集約
+      const maxChips = 7; // 8個目以降は "+N" で集約
       const shown = dayList.slice(0, maxChips);
       const hidden = dayList.length - shown.length;
       let chipsHtml = '';
@@ -8126,8 +8141,13 @@ function renderCalendarGrid(container, animDirection) {
           const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
           const isSeatOnly = !course || !course.type || course.type === '席だけ' || course.type === '席のみ' || course.id === 'S' || course.id === 'RS';
           if (isSeatOnly) {
+            chipCls += ' seat-only';
             txt = (peopleText ? peopleText + ' ' : '') + nm;
           } else {
+            const type = course.type || '';
+            if (type.indexOf('プレミアム') >= 0 || course.id === 'E') chipCls += ' premium';
+            else if (type.indexOf('飲み放題') >= 0 || type.indexOf('クラフト') >= 0) chipCls += ' drink';
+            else if (type.indexOf('料理') >= 0 || type.indexOf('コラボ') >= 0 || type.indexOf('女子会') >= 0) chipCls += ' meal';
             const label = course.shortName || course.name || course.type || r.course;
             txt = (peopleText ? peopleText + ' ' : '') + label;
           }
