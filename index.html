@@ -7409,6 +7409,7 @@ function onListDateChange() {
   smState.date = listDate.value;
   try { state.date = listDate.value; } catch (e) {}
   renderReservationList();
+  scrollAfterCalendarDateTap('listDate');
 }
 
 // 席名から Yahoo!リザベ等のプレースホルダー（要席指定ラベル）を除去
@@ -8304,7 +8305,6 @@ function renderCalendarGrid(container, animDirection) {
       }
       // 選択ハイライトのために再描画
       renderCalendarGrid(container);
-      scrollAfterCalendarDateTap(targetId);
     });
   });
 
@@ -8401,6 +8401,7 @@ function onSmDateChange() {
   updateDateInputAndCal('resDate',  dateInp.value);
   try { state.date = dateInp.value; } catch (e) {}
   if (typeof renderSeatMap === 'function') renderSeatMap();
+  scrollAfterCalendarDateTap('smDate');
 }
 
 // 座席表から飛んできた時、即座に空き判定 → 時刻を選択して、人数入力欄にフォーカス
