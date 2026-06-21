@@ -1255,6 +1255,99 @@ select.time-select option:disabled { color: #aaa; }
 .cal-day.sun { color: #c62828; }
 .cal-day.sat { color: #1976d2; }
 
+/* ★ Claude (2026-06-21): 一覧・座席表タブで使う「予約チップ付き月カレンダー」モード。
+   data-mode="events" を .cal-grid-wrap に付けたとき適用。日セルが縦長になり、
+   その日の予約が時刻順チップで並ぶ。スクショ参考: 添付ユーザー画像 (2026/06/21)。 */
+.cal-grid-wrap[data-mode="events"] .cal-grid { gap: 3px; }
+.cal-grid-wrap[data-mode="events"] .cal-day,
+.cal-grid-wrap[data-mode="events"] .cal-day-blank {
+  aspect-ratio: auto;
+  min-height: 88px;
+  flex-direction: column;
+  align-items: stretch; justify-content: flex-start;
+  padding: 3px 3px 4px;
+  font-size: 11px; font-weight: 600;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 5px;
+  overflow: hidden;
+  text-align: left;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day-blank {
+  background: #fcfcfc; border-color: #f0f0f0;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-day-num {
+  font-size: 11px; line-height: 1; margin-bottom: 2px;
+  text-align: left; padding-left: 2px;
+  color: inherit;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.today {
+  background: #fff;
+  border-color: transparent;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.today .cal-day-num {
+  display: inline-block;
+  background: #d32f2f; color: #fff;
+  width: 18px; height: 18px; line-height: 18px;
+  border-radius: 50%; text-align: center;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.selected {
+  background: #fff3e0 !important; color: var(--text) !important;
+  border-color: #ff9800 !important;
+  box-shadow: 0 0 0 1.5px #ff9800 inset;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.holiday {
+  background: #fff5f5;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-events {
+  display: flex; flex-direction: column; gap: 1.5px;
+  overflow: hidden;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip {
+  font-size: 9.5px; line-height: 1.15;
+  padding: 1.5px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: #1b5e20;
+  background: #c8e6c9; /* PWA直接=緑系（スクショに合わせる） */
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.src-yahoo {
+  background: #ffcdd2; color: #b71c1c; /* Yahoo=赤系 */
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.src-autoreserve {
+  background: #bbdefb; color: #0d47a1; /* AutoReserve=青系 */
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.takeout {
+  background: #ffe0b2; color: #e65100; /* お土産=橙系 */
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.cancelled {
+  background: #eeeeee; color: #999; text-decoration: line-through;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.more {
+  background: #f5f5f5; color: #666; text-align: center;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.holiday-closed .cal-day-num {
+  color: #c62828;
+}
+.cal-grid-wrap[data-mode="events"] .cal-day.holiday-closed::after {
+  content: '休業';
+  display: block;
+  background: #ef9a9a; color: #fff;
+  font-size: 9px; font-weight: 700;
+  text-align: center; padding: 1px 0;
+  border-radius: 3px; margin-bottom: 2px;
+}
+/* events モードでは過去日もチップを判別できるよう、フェードを薄くする */
+.cal-grid-wrap[data-mode="events"] .cal-day.past { opacity: 0.78; }
+/* タブ内のクラタを隠すユーティリティ（.cal-only を付与した .card 内の日付入力フィールド・凡例等を除外） */
+.cal-only .field.sticky-date,
+.cal-only .legend-hide { display: none; }
+
 .empty-state { text-align: center; padding: 24px; color: var(--muted); font-size: 14px; }
 
 .summary-row {
@@ -1659,21 +1752,24 @@ select.time-select option:disabled { color: #aaa; }
 <!-- TAB: 本日の予約 -->
 <!-- ============================================ -->
 <section id="tab-list" class="hidden">
-  <div class="card">
-    <h2>📋 本日の予約一覧</h2>
+  <div class="card cal-only">
+    <!-- ★ Claude (2026-06-21): 月カレンダーをメイン表示に。装飾UI（凡例・同期ボタン等）は最小化。 -->
     <div class="field sticky-date">
       <label>表示日</label>
       <input type="date" id="listDate" onchange="onListDateChange()" oninput="onListDateChange()" />
     </div>
-    <div class="cal-grid-wrap" data-target="listDate" data-onchange="onListDateChange"></div>
-    <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px;">
-      <button id="refreshBtn" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
-      <div id="lastSyncTime" class="last-sync-time">最終同期：未同期</div>
-      <span style="font-size:10px;color:var(--muted);">※ 60秒ごとに自動同期</span>
-    </div>
-    <div style="font-size:11px; color:var(--muted); padding:6px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:8px;">
-      ⚫ Yahoo!リザベ取込　／　◾️ AutoReserve取込　／　⚪ PWA直接入力
-    </div>
+    <div class="cal-grid-wrap" data-target="listDate" data-mode="events" data-onchange="onListDateChange"></div>
+    <!-- 自動同期は内部処理で常時行うため、手動同期ボタンと凡例は折り畳んで控えめに -->
+    <details style="margin:6px 0 8px;">
+      <summary style="font-size:11px;color:var(--muted);cursor:pointer;">同期・凡例</summary>
+      <div style="display:flex;gap:6px;align-items:center;margin:6px 0;">
+        <button id="refreshBtn" class="refresh-btn" onclick="pullFromCalendar()">🔄 カレンダーから取得</button>
+        <div id="lastSyncTime" class="last-sync-time">最終同期：未同期</div>
+      </div>
+      <div style="font-size:11px; color:var(--muted); padding:6px 10px; background:var(--primary-light); border-radius:6px;">
+        ⚫ Yahoo!リザベ取込　／　◾️ AutoReserve取込　／　⚪ PWA直接入力
+      </div>
+    </details>
     <!-- 新規予約クイックアクセス -->
     <div style="display:flex;gap:6px;margin-bottom:10px;">
       <button class="primary" onclick="quickNewReservationFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">＋ 新規予約</button>
@@ -1693,19 +1789,21 @@ select.time-select option:disabled { color: #aaa; }
 <!-- TAB: 座席表 -->
 <!-- ============================================ -->
 <section id="tab-seatmap">
-  <div class="card">
-    <h2>🪑 座席表（タップで新規予約・移動）</h2>
+  <div class="card cal-only">
+    <!-- ★ Claude (2026-06-21): 月カレンダーをメイン表示に。座席表本体は選択日に応じて以下に展開。 -->
     <div class="field sticky-date">
       <label>日付<span class="req">*</span></label>
       <input type="date" id="smDate" />
     </div>
-    <div class="cal-grid-wrap" data-target="smDate" data-onchange="onSmDateChange"></div>
-    <!-- ★ Claude (2026-06-21): 時間帯セレクタは削除。全時間帯の予約を統合表示し、
-         同一席に複数時間帯の予約がある席は .multi-time クラスで太点線囲いにする。 -->
-    <div style="margin-bottom:10px">
-      <button id="refreshBtnSm" class="refresh-btn" onclick="pullFromCalendar()" style="width:100%;justify-content:center">🔄 カレンダーから取得</button>
-      <div id="lastSyncTimeSm" class="last-sync-time" style="display:block;margin-top:4px;text-align:center">最終同期：未同期</div>
-    </div>
+    <div class="cal-grid-wrap" data-target="smDate" data-mode="events" data-onchange="onSmDateChange"></div>
+    <!-- 時間帯セレクタは廃止（2026-06-21 別タスク）。同期は折り畳みへ収納。 -->
+    <details style="margin:6px 0 8px;">
+      <summary style="font-size:11px;color:var(--muted);cursor:pointer;">同期</summary>
+      <div style="margin:6px 0;">
+        <button id="refreshBtnSm" class="refresh-btn" onclick="pullFromCalendar()" style="width:100%;justify-content:center">🔄 カレンダーから取得</button>
+        <div id="lastSyncTimeSm" class="last-sync-time" style="display:block;margin-top:4px;text-align:center">最終同期：未同期</div>
+      </div>
+    </details>
     <div class="move-mode-banner" id="moveBanner">
       🔄 移動モード：移動先の席、または未設定枠の「空」をタップしてください　<a href="javascript:cancelMoveMode()" style="color:inherit;text-decoration:underline;">キャンセル</a>
     </div>
@@ -4935,6 +5033,12 @@ let _saveTimer = null;
 function refreshAllReservationViews() {
   try { if (typeof renderReservationList === 'function') renderReservationList(); } catch (e) {}
   try { if (typeof renderSeatMap === 'function')         renderSeatMap(); } catch (e) {}
+  // ★ Claude (2026-06-21): events モードの月カレンダー（一覧・座席表タブ）も再描画して予約チップを最新化
+  try {
+    document.querySelectorAll('.cal-grid-wrap[data-mode="events"]').forEach(function(c) {
+      if (typeof renderCalendarGrid === 'function') renderCalendarGrid(c);
+    });
+  } catch (e) {}
 }
 
 function saveReservations() {
@@ -7953,6 +8057,29 @@ function renderCalendarGrid(container, animDirection) {
   const holMap = {};
   (typeof getHolidays === 'function' ? getHolidays() : []).forEach(function(h) { holMap[h.date] = h; });
 
+  // ★ Claude (2026-06-21): events モード時は当月の予約を日付ごとに集計しチップ描画する。
+  //   反応速度を優先するため、ここで一度だけビルドして以下のループで参照する。
+  const isEvents = container.getAttribute('data-mode') === 'events';
+  const monthRes = {}; // dateStr -> sorted reservations[]
+  if (isEvents && typeof reservations !== 'undefined' && Array.isArray(reservations)) {
+    const monthPrefix = state.year + '-' + String(state.month + 1).padStart(2,'0') + '-';
+    reservations.forEach(function(r) {
+      if (!r || !r.date) return;
+      if (r.date.indexOf(monthPrefix) !== 0) return;
+      if ((r.store || 'torihashi') !== currentStore) return;
+      (monthRes[r.date] = monthRes[r.date] || []).push(r);
+    });
+    Object.keys(monthRes).forEach(function(k) {
+      monthRes[k].sort(function(a, b) {
+        // キャンセル予約は末尾へ
+        const ca = a.status === 'cancelled' ? 1 : 0;
+        const cb = b.status === 'cancelled' ? 1 : 0;
+        if (ca !== cb) return ca - cb;
+        return (a.time || '').localeCompare(b.time || '');
+      });
+    });
+  }
+
   let html = '<div class="cal-header">';
   html += '<button type="button" class="cal-nav" data-nav="-1">‹</button>';
   html += '<span class="cal-title">' + state.year + '年 ' + (state.month + 1) + '月</span>';
@@ -7972,11 +8099,41 @@ function renderCalendarGrid(container, animDirection) {
     if (dateStr === todayStr) cls += ' today';
     if (dateStr === selectedStr) cls += ' selected';
     if (dateStr < todayStr) cls += ' past';
-    if (holMap[dateStr]) cls += ' holiday';
+    if (holMap[dateStr]) cls += ' holiday holiday-closed';
     if (dow === 0) cls += ' sun';
     if (dow === 6) cls += ' sat';
     const title = holMap[dateStr] ? holMap[dateStr].reason : '';
-    html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '" title="' + title + '">' + d + '</button>';
+
+    if (isEvents) {
+      // 日付番号 + その日の予約チップ
+      const dayList = monthRes[dateStr] || [];
+      const maxChips = 5; // 6個目以降は "+N" で集約
+      const shown = dayList.slice(0, maxChips);
+      const hidden = dayList.length - shown.length;
+      let chipsHtml = '';
+      shown.forEach(function(r) {
+        let chipCls = 'cal-chip';
+        if (r.status === 'cancelled')      chipCls += ' cancelled';
+        else if (r.type === 'takeout')     chipCls += ' takeout';
+        else if (r.source === 'yahoo')     chipCls += ' src-yahoo';
+        else if (r.source === 'autoreserve') chipCls += ' src-autoreserve';
+        // 表示テキスト: 時刻 + 名前（人数）
+        const tm = (r.time || '').replace(/^0/, ''); // "09:00" → "9:00"
+        const nm = r.name || '';
+        const txt = (r.type === 'takeout' ? '🥡' : tm) + ' ' + nm;
+        chipsHtml += '<div class="' + chipCls + '" title="' + escapeAttr(tm + ' ' + nm + (r.people ? ' / ' + r.people + '名' : '')) + '">'
+                   + escapeAttr(txt) + '</div>';
+      });
+      if (hidden > 0) {
+        chipsHtml += '<div class="cal-chip more">+' + hidden + '件</div>';
+      }
+      html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '" title="' + escapeAttr(title) + '">'
+            +   '<span class="cal-day-num">' + d + '</span>'
+            +   '<div class="cal-events">' + chipsHtml + '</div>'
+            + '</button>';
+    } else {
+      html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '" title="' + title + '">' + d + '</button>';
+    }
   }
   html += '</div>';
 
