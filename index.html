@@ -222,7 +222,7 @@ button.secondary:active { background: var(--primary); color: white; }
 .time-btn.ok    .slot-status { background: var(--success-bg); color: var(--success); }
 .time-btn.warn  .slot-status { background: var(--warning-bg); color: var(--warning); }
 .time-btn.full  .slot-status { background: var(--error-bg); color: var(--error); }
-.time-btn.full  { opacity: 0.55; cursor: not-allowed; }
+.time-btn.full  { opacity: 0.75; cursor: pointer; }
 .time-btn.selected .slot-status { background: rgba(255,255,255,.25); color: white; }
 
 .reservation-item {
@@ -4937,19 +4937,18 @@ function refreshAvailabilityForStoreChange() {
   if (!dateInp || !peopleInp || !dateInp.value) return;
   // 自動詳細遷移を一時的に抑制（再計算中に意図せずstep2へ飛ばさない）
   state._suppressAutoAdvance = true;
+  const selectedTime = state.time;
   if (typeof checkAvailability === 'function') {
     try { checkAvailability(); } catch (e) {}
     // 時刻が選択済みなら slotDetails も再表示
-    if (state.time) {
+    if (selectedTime) {
       setTimeout(function() {
-        const sel = document.getElementById('slotGrid');
-        if (sel && sel.tagName === 'SELECT') {
-          sel.value = state.time;
-          const opt = sel.querySelector('option[value="' + state.time + '"]');
-          if (opt && !opt.disabled) {
-            if (typeof showSlotDetails === 'function') {
-              try { showSlotDetails(dateInp.value, state.time, parseInt(peopleInp.value) || 2); } catch (e) {}
-            }
+        const grid = document.getElementById('slotGrid');
+        if (grid) {
+          const btn = grid.querySelector('.time-btn[data-time="' + selectedTime + '"]');
+          if (btn) btn.classList.add('selected');
+          if (typeof showSlotDetails === 'function') {
+            try { showSlotDetails(dateInp.value, selectedTime, parseInt(peopleInp.value) || 2); } catch (e) {}
           }
         }
         // 抑制フラグ解除
@@ -5515,37 +5514,38 @@ function checkAvailability() {
     + '<div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text);">'
     + '時刻を選択（15分刻み）'
     + '</div>'
-    + '<select id="slotGrid" class="time-select" style="width:100%;margin-top:8px"></select>'
+    + '<div id="slotGrid" class="time-grid" style="margin-top:8px"></div>'
     + '<div id="slotResult" style="margin-top:14px"></div>';
 
-  const sel = document.getElementById('slotGrid');
-  // 「未選択」エントリ＋全時刻オプション
-  // 候補席が無い時間帯も「選択可」にして、ユーザーが手動で席指定できるようにする
-  let html = '<option value="">▼ 時刻を選んでください</option>';
+  const grid = document.getElementById('slotGrid');
+  // 全時刻をボタンで即表示する。
+  // 候補席が無い時間帯も選択可能にして、ユーザーが手動で席指定/確認できるようにする。
+  let html = '';
   TIME_SLOTS.forEach(function(t) {
     const slot = computeSlotAvailability(date, t, people, dayRes);
-    const label = t + ' ' + slot.label;
-    // ✗（満）でも disabled にしない → ユーザーが選択して手動席指定 or 確認可能に
-    html += '<option value="' + t + '" data-cls="' + slot.cls + '">' + label + '</option>';
+    html += '<button type="button" class="time-btn ' + slot.cls + '" data-time="' + t + '">'
+          +   '<span>' + t + '</span>'
+          +   '<span class="slot-status">' + slot.label + '</span>'
+          + '</button>';
   });
-  sel.innerHTML = html;
-  sel.addEventListener('change', function() {
-    const t = sel.value;
-    if (!t) return;
-    state.time = t;
-    // dataset 上のクラスを擬似的に持たせる（旧コードの互換）
-    sel.setAttribute('data-time', t);
-    showSlotDetails(date, t, people);
+  grid.innerHTML = html;
+  grid.querySelectorAll('.time-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      const t = btn.getAttribute('data-time');
+      if (!t) return;
+      grid.querySelectorAll('.time-btn').forEach(function(b) { b.classList.remove('selected'); });
+      btn.classList.add('selected');
+      state.time = t;
+      showSlotDetails(date, t, people);
+    });
   });
 
-  // 「空き時間を確認」を押した直後 → 時刻プルダウンへ自動スクロール
+  // 「空き時間を確認」を押した直後 → 時刻ボタン一覧へ自動スクロール
   // ただし店舗切替などによる再描画時はスクロールしない（_suppressAutoAdvance フラグで判定）
   if (!(state && state._suppressAutoAdvance)) {
     setTimeout(function() {
       try {
-        sel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        // プルダウンを開く（focus）
-        sel.focus({ preventScroll: true });
+        grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
       } catch (e) {}
     }, 100);
   }
@@ -8406,6 +8406,7 @@ function onSmDateChange() {
 
 // 座席表から飛んできた時、即座に空き判定 → 時刻を選択して、人数入力欄にフォーカス
 function autoAdvanceFromSeatMap() {
+  const desiredTime = state.time;
   // ① 空き判定を即実行（時刻スロットを描画）
   setTimeout(function() {
     if (typeof checkAvailability === 'function') {
@@ -8413,11 +8414,15 @@ function autoAdvanceFromSeatMap() {
     }
     // ② 既存時刻があれば自動選択
     setTimeout(function() {
-      if (state.time) {
-        const sel = document.getElementById('slotGrid');
-        if (sel && sel.tagName === 'SELECT') {
-          sel.value = state.time;
-          try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+      if (desiredTime) {
+        const grid = document.getElementById('slotGrid');
+        if (grid) {
+          const btn = grid.querySelector('.time-btn[data-time="' + desiredTime + '"]');
+          if (btn) btn.classList.add('selected');
+          try {
+            const people = parseInt((document.getElementById('resPeople') || {}).value) || state.people || 2;
+            showSlotDetails(state.date, desiredTime, people);
+          } catch (e) {}
         }
       }
       // ③ 人数欄にフォーカス
