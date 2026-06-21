@@ -80,6 +80,14 @@ main { padding: 16px; max-width: 540px; margin: 0 auto; }
   box-shadow: var(--shadow);
   border: 1px solid var(--border);
 }
+.card.cal-only {
+  padding: 10px 4px 12px;
+  margin-left: -12px;
+  margin-right: -12px;
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+}
 .card h2 {
   margin: 0 0 14px;
   font-size: 16px;
@@ -1258,23 +1266,31 @@ select.time-select option:disabled { color: #aaa; }
 /* ★ Claude (2026-06-21): 一覧・座席表タブで使う「予約チップ付き月カレンダー」モード。
    data-mode="events" を .cal-grid-wrap に付けたとき適用。日セルが縦長になり、
    その日の予約が時刻順チップで並ぶ。スクショ参考: 添付ユーザー画像 (2026/06/21)。 */
-.cal-grid-wrap[data-mode="events"] .cal-grid { gap: 3px; }
+.cal-grid-wrap[data-mode="events"] {
+  margin-left: -2px;
+  margin-right: -2px;
+}
+.cal-grid-wrap[data-mode="events"] .cal-header {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.cal-grid-wrap[data-mode="events"] .cal-grid { gap: 1px; }
 .cal-grid-wrap[data-mode="events"] .cal-day,
 .cal-grid-wrap[data-mode="events"] .cal-day-blank {
   aspect-ratio: auto;
   min-height: 112px;
   flex-direction: column;
   align-items: stretch; justify-content: flex-start;
-  padding: 3px 2px 4px;
+  padding: 2px 1px 3px;
   font-size: 11px; font-weight: 600;
   background: #fff;
-  border: 1px solid #f0f0f0;
-  border-radius: 4px;
+  border: 0;
+  border-radius: 2px;
   overflow: hidden;
   text-align: left;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day-blank {
-  background: #fcfcfc; border-color: #f0f0f0;
+  background: #fcfcfc;
 }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-day-num {
   font-size: 11px; line-height: 1; margin-bottom: 2px;
@@ -1309,9 +1325,9 @@ select.time-select option:disabled { color: #aaa; }
   display: block;
   width: 100%;
   min-height: 16px;
-  font-size: 10.5px; line-height: 1.15;
-  padding: 2px 4px;
-  border-radius: 3px;
+  font-size: 10px; line-height: 1.15;
+  padding: 2px 3px;
+  border-radius: 2px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
