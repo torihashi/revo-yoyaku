@@ -198,6 +198,29 @@ button.secondary:active { background: var(--primary); color: white; }
   border-color: var(--primary); background: var(--primary-light); color: var(--primary-dark);
 }
 .choice.disabled { opacity: 0.4; cursor: not-allowed; }
+.note-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.note-badge-btn {
+  border: 1.5px solid var(--border);
+  background: var(--card);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.note-badge-btn.selected {
+  border-color: var(--primary);
+  background: var(--primary-light);
+  color: var(--primary-dark);
+}
 
 .time-grid {
   display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
@@ -1728,6 +1751,11 @@ select.time-select option:disabled { color: #aaa; }
 
   <div class="field">
     <label>特記事項</label>
+    <div class="note-badge-row" id="noteBadgeRow">
+      <button type="button" class="note-badge-btn" data-note-badge="料理あり">料理あり</button>
+      <button type="button" class="note-badge-btn" data-note-badge="二次会">二次会</button>
+      <button type="button" class="note-badge-btn" data-note-badge="後日">後日</button>
+    </div>
     <textarea id="notes" rows="2" placeholder="アレルギー・お祝い・ベビーカー等"></textarea>
   </div>
 
@@ -5211,6 +5239,12 @@ window.addEventListener('DOMContentLoaded', () => {
   setupTapToClear('kidInfant', '0');
   setupTapToClear('kidElementary', '0');
 
+  document.querySelectorAll('.note-badge-btn[data-note-badge]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btn.classList.toggle('selected');
+    });
+  });
+
   // 電話番号: 全角→半角 / 非数字除去 / 同番号で過去予約検索
   function setupPhoneInput(phoneId, nameId, hintId) {
     const phoneInp = document.getElementById(phoneId);
@@ -6154,6 +6188,19 @@ function toKatakana(s) {
   return s.replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60));
 }
 
+function getSelectedNoteBadges() {
+  return Array.prototype.slice.call(document.querySelectorAll('.note-badge-btn.selected[data-note-badge]'))
+    .map(function(btn) { return btn.getAttribute('data-note-badge') || ''; })
+    .filter(Boolean);
+}
+
+function buildNotesWithBadges(rawNotes) {
+  const badges = getSelectedNoteBadges();
+  const badgeText = badges.map(function(b) { return '【' + b + '】'; }).join('');
+  const notes = (rawNotes || '').trim();
+  return (badgeText + (notes ? (badgeText ? ' ' : '') + notes : '')).trim();
+}
+
 function confirmReservation() {
   try {
     const resDateInp = document.getElementById('resDate');
@@ -6176,7 +6223,7 @@ function confirmReservation() {
     const kidInfant = parseInt(kidInfantEl && kidInfantEl.value, 10) || 0;
     const kidElementary = parseInt(kidElementaryEl && kidElementaryEl.value, 10) || 0;
     const seatPref = seatPrefEl ? seatPrefEl.value : '自動';
-    const notes = notesEl ? (notesEl.value || '').trim() : '';
+    const notes = buildNotesWithBadges(notesEl ? notesEl.value : '');
 
     if (!name) { alert('お名前を入力してください'); return; }
     if (!phone) { alert('お電話番号を入力してください'); return; }
@@ -6378,6 +6425,9 @@ function closeModalAndReset() {
   document.getElementById('kidInfant').value = '0';
   document.getElementById('kidElementary').value = '0';
   document.getElementById('notes').value = '';
+  document.querySelectorAll('.note-badge-btn.selected').forEach(function(btn) {
+    btn.classList.remove('selected');
+  });
   document.getElementById('availabilityResult').innerHTML = '';
   const rh = document.getElementById('repeatHint');
   if (rh) { rh.innerHTML = ''; rh.classList.remove('show'); }
