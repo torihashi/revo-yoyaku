@@ -1740,7 +1740,7 @@ select.time-select option:disabled { color: #aaa; }
 <div class="card hidden" id="step3">
   <h2>③ 内容を確認して確定</h2>
   <div id="confirmSummary"></div>
-  <button class="primary" onclick="submitReservation()">この内容で予約を確定する</button>
+  <button class="primary" id="submitReservationBtn" onclick="submitReservation()">この内容で予約を確定する</button>
   <button class="secondary" onclick="backToStep2()">← 入力に戻る</button>
 </div>
 
@@ -6003,11 +6003,30 @@ function confirmReservation() {
 
 function submitReservation() {
   const data = state.pending;
-  reservations.push(data);
-  saveReservations();
-  // アクティビティログ
-  logActivity('📝 新規予約', data.name + '様 ' + data.date + ' ' + data.time,
-    data.people + '名 ／ ' + (data.seat || '未設定') + ' ／ コース:' + (data.course || '-'));
+  const btn = document.getElementById('submitReservationBtn');
+  if (btn && btn.disabled) return;
+  if (!data || !data.date || !data.time || !data.name) {
+    alert('予約確認データが見つかりません。お手数ですが「入力に戻る」から再確認してください。');
+    return;
+  }
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+  }
+  try {
+    reservations.push(data);
+    saveReservations();
+    // アクティビティログ
+    logActivity('📝 新規予約', data.name + '様 ' + data.date + ' ' + data.time,
+      data.people + '名 ／ ' + (data.seat || '未設定') + ' ／ コース:' + (data.course || '-'));
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'この内容で予約を確定する';
+    }
+    alert('端末への保存に失敗しました: ' + String(err));
+    return;
+  }
 
   // Webhook（Phase 3）: 予約カレンダーへ書込
   if (isWebhookConfigured()) {
