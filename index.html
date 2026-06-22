@@ -1682,7 +1682,17 @@ select.time-select option:disabled { color: #aaa; }
       <input type="number" id="step2People" value="2" min="1" max="80" inputmode="numeric" onchange="changeStep2People(0)" />
       <button type="button" onclick="changeStep2People(1)" aria-label="プラス">＋</button>
     </div>
-    <button type="button" class="secondary" onclick="reCheckAvailabilityFromStep2()" style="margin-top:6px;padding:6px;font-size:12px;width:auto">← 空き確認に戻る（人数・時刻を変える）</button>
+    <!-- ★ Claude (2026-06-21): step2 から戻らずに時刻を変えられる時刻ステッパー＋ピッカー。 -->
+    <label style="display:flex;align-items:center;justify-content:space-between;margin:10px 0 4px">
+      <span>時刻：<strong id="step2TimeLabel" style="font-size:18px">--:--</strong></span>
+      <button type="button" class="secondary" onclick="openStep2TimePicker()" style="padding:3px 10px;font-size:11px;width:auto;margin:0;">時刻一覧</button>
+    </label>
+    <div class="stepper">
+      <button type="button" onclick="changeStep2Time(-15)" aria-label="15分前">−15分</button>
+      <input type="text" id="step2TimeInput" value="" readonly style="text-align:center;font-weight:600;background:#fff" />
+      <button type="button" onclick="changeStep2Time(+15)" aria-label="15分後">＋15分</button>
+    </div>
+    <button type="button" class="secondary" onclick="reCheckAvailabilityFromStep2()" style="margin-top:6px;padding:6px;font-size:12px;width:auto">← 空き確認に戻る（一覧でじっくり選ぶ）</button>
   </div>
 
   <div class="field">
@@ -1705,7 +1715,11 @@ select.time-select option:disabled { color: #aaa; }
   </div>
 
   <div class="field">
-    <label>席のご希望</label>
+    <label style="display:flex;align-items:center;justify-content:space-between;">
+      <span>席のご希望</span>
+      <!-- ★ Claude (2026-06-21): 席選択モーダルを開くボタン。座席表からのプリセット人数オーバー時にも自動で開く。 -->
+      <button type="button" class="secondary" onclick="openSeatPickerModal()" style="padding:3px 10px;font-size:11px;width:auto;margin:0;">🪑 席を選び直す</button>
+    </label>
     <select id="seatPref">
       <!-- 動的に rerenderSeatPref() で書き換え -->
       <option value="自動">おまかせ（推奨席を自動選定）</option>
@@ -5715,6 +5729,8 @@ function proceedToStep2() {
   renderCourseGrid();
   // step2 の人数フィールドを同期
   syncStep2People();
+  // ★ Claude (2026-06-21): step2 の時刻フィールドも同期
+  syncStep2Time();
   setTimeout(function() {
     const nameInput = document.getElementById('custName');
     if (nameInput) {
@@ -5732,6 +5748,231 @@ function syncStep2People() {
   const label = document.getElementById('step2PeopleLabel');
   if (inp) inp.value = state.people;
   if (label) label.textContent = state.people + '名';
+}
+
+// ★ Claude (2026-06-21): step2 の時刻ラベル/入力を state.time に同期
+function syncStep2Time() {
+  const inp = document.getElementById('step2TimeInput');
+  const lbl = document.getElementById('step2TimeLabel');
+  const v = state.time || '';
+  if (inp) inp.value = v;
+  if (lbl) lbl.textContent = v || '--:--';
+}
+
+// ★ Claude (2026-06-21): step2 内で時刻を ±15分 単位で変える（戻らずに即変更）。
+//   変更後は同時間帯の使用席が変わるので、席候補ドロップダウンも再描画する。
+function changeStep2Time(deltaMin) {
+  if (!state.time) return;
+  const parts = String(state.time).split(':');
+  if (parts.length !== 2) return;
+  let mins = (parseInt(parts[0], 10) * 60) + parseInt(parts[1], 10) + deltaMin;
+  // TIME_SLOTS の範囲内にクランプ
+  if (typeof TIME_SLOTS !== 'undefined' && TIME_SLOTS.length > 0) {
+    const slotMins = TIME_SLOTS.map(function(t) {
+      const p = t.split(':');
+      return parseInt(p[0],10) * 60 + parseInt(p[1],10);
+    });
+    const minM = Math.min.apply(null, slotMins);
+    const maxM = Math.max.apply(null, slotMins);
+    if (mins < minM) mins = minM;
+    if (mins > maxM) mins = maxM;
+  }
+  const hh = String(Math.floor(mins / 60)).padStart(2, '0');
+  const mm = String(mins % 60).padStart(2, '0');
+  state.time = hh + ':' + mm;
+  syncStep2Time();
+  // 注: rerenderSeatPref はオプション一覧自体（時刻非依存）を再描画してユーザーの選択を消すので呼ばない。
+  //     使用席状態は openSeatPickerModal 内で都度計算する。
+}
+
+// ★ Claude (2026-06-21): 席選択モーダル。
+//   新規予約フローの step2 で「席を選び直す」ボタン、または人数オーバー時に自動で開く。
+//   - 現店舗の全席・結合席を min/max とともに一覧
+//   - 人数（state.people）に対し収容可能なものは緑、収容不可は赤背景、同時間帯で使用中は灰色＋disabled
+//   - タップで state.preselectedSeat を更新し、seatPref ドロップダウンも合わせる
+function openSeatPickerModal() {
+  const existing = document.getElementById('seatPickerOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'seatPickerOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  // この時間帯（±60分）で使用中の卓トークン集合を作る（自分以外）
+  const usedTokens = new Set();
+  try {
+    const dayRes = reservations.filter(function(r) {
+      return (r.store || 'torihashi') === currentStore
+          && r.date === state.date
+          && r.status !== 'cancelled'
+          && r.type !== 'takeout'
+          && Math.abs(timeDiff(r.time, state.time || '18:00')) <= 60;
+    });
+    dayRes.forEach(function(r) {
+      (typeof expandSeat === 'function' ? expandSeat(r.seat) : [r.seat]).forEach(function(t) {
+        if (t) usedTokens.add(t);
+      });
+    });
+  } catch (e) {}
+
+  // 候補列：単卓（SEAT_MASTER）と結合席（COMBINATIONS）
+  const seats = (currentStore === 'revolverd' ? REVO_SEAT_MASTER : SEAT_MASTER) || [];
+  const combos = (currentStore === 'revolverd' ? (typeof REVO_COMBINATIONS !== 'undefined' ? REVO_COMBINATIONS : []) : COMBINATIONS) || [];
+
+  const people = parseInt(state.people, 10) || 1;
+
+  // エリアごとにグループ化して描画
+  const byArea = {};
+  seats.forEach(function(s) {
+    const item = { id: s.id, label: s.id, min: s.min, max: s.max, area: s.area, note: s.note };
+    (byArea[s.area] = byArea[s.area] || []).push(item);
+  });
+  combos.forEach(function(c) {
+    const item = { id: c.tables, label: c.tables, min: c.min, max: c.max, area: c.area, note: c.note, isCombo: true };
+    (byArea[c.area] = byArea[c.area] || []).push(item);
+  });
+
+  let bodyHtml = '';
+  Object.keys(byArea).forEach(function(area) {
+    bodyHtml += '<div style="font-weight:700;font-size:13px;margin:10px 0 4px;color:var(--primary-dark);">' + escapeAttr(area) + '</div>';
+    bodyHtml += '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;">';
+    byArea[area].forEach(function(item) {
+      const fits = (people >= (item.min || 1) && people <= (item.max || 99));
+      // 結合席は構成卓をすべて満たす必要 / 単卓は自分が空いている必要
+      let busy = false;
+      const tokens = (typeof expandSeat === 'function') ? expandSeat(item.id) : [item.id];
+      busy = tokens.some(function(t) { return usedTokens.has(t); });
+
+      let bg = '#fff', color = 'var(--text)', border = '#ddd', cursor = 'pointer';
+      if (busy) {
+        bg = '#eeeeee'; color = '#999'; border = '#ddd'; cursor = 'not-allowed';
+      } else if (fits) {
+        bg = '#e8f5e9'; color = '#1b5e20'; border = '#66bb6a';
+      } else {
+        bg = '#fff3e0'; color = '#bf360c'; border = '#ffab91';
+      }
+      const titleNote = item.note ? (' / ' + item.note) : '';
+      bodyHtml += '<button type="button" class="seat-pick-btn"'
+                + ' data-seat="' + escapeAttr(item.id) + '"'
+                + ' data-fits="' + (fits ? '1' : '0') + '"'
+                + ' data-busy="' + (busy ? '1' : '0') + '"'
+                + ' ' + (busy ? 'disabled' : '')
+                + ' style="text-align:left;padding:8px 10px;border-radius:8px;'
+                +        'background:' + bg + ';color:' + color + ';'
+                +        'border:1.5px solid ' + border + ';cursor:' + cursor + ';'
+                +        'font-size:13px;font-weight:600;line-height:1.3;">'
+                +   '<div>' + escapeAttr(item.label) + (item.isCombo ? ' <span style="font-size:10px;font-weight:400;">結合</span>' : '') + '</div>'
+                +   '<div style="font-size:11px;font-weight:400;opacity:0.9;">'
+                +     (item.min || 1) + '〜' + (item.max || '∞') + '名'
+                +     (busy ? ' / <span style="color:#c62828">使用中</span>' : '')
+                +     (!busy && !fits ? ' / <span>人数不一致</span>' : '')
+                +     escapeAttr(titleNote)
+                +   '</div>'
+                + '</button>';
+    });
+    bodyHtml += '</div>';
+  });
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.cssText = 'max-width:480px;max-height:85vh;overflow-y:auto;';
+  box.innerHTML = ''
+    + '<h3 style="margin-top:0;">🪑 席を選択</h3>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:6px;">'
+    +   '人数: <strong>' + people + '名</strong> ／ 時刻: <strong>' + escapeAttr(state.time || '--:--') + '</strong>'
+    + '</div>'
+    + '<div style="font-size:11px;color:var(--muted);margin-bottom:10px;line-height:1.5;">'
+    +   '<span style="display:inline-block;background:#e8f5e9;border:1px solid #66bb6a;padding:1px 6px;border-radius:4px;color:#1b5e20;">緑</span>=収容OK　'
+    +   '<span style="display:inline-block;background:#fff3e0;border:1px solid #ffab91;padding:1px 6px;border-radius:4px;color:#bf360c;">橙</span>=人数不一致　'
+    +   '<span style="display:inline-block;background:#eeeeee;border:1px solid #ddd;padding:1px 6px;border-radius:4px;color:#999;">灰</span>=使用中'
+    + '</div>'
+    + bodyHtml
+    + '<div style="display:flex;gap:6px;margin-top:14px;">'
+    +   '<button type="button" class="secondary" id="seatPickerClearBtn" style="flex:1;">おまかせに戻す</button>'
+    +   '<button type="button" class="secondary" id="seatPickerCloseBtn" style="flex:1;">キャンセル</button>'
+    + '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  box.querySelectorAll('.seat-pick-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (btn.disabled) return;
+      const seatId = btn.getAttribute('data-seat');
+      // 状態を更新
+      state.preselectedSeat = seatId;
+      if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+      // seatPref ドロップダウンの該当オプションを選択（無ければ「自動」のまま）
+      try {
+        const sel = document.getElementById('seatPref');
+        if (sel) {
+          let found = false;
+          for (let i = 0; i < sel.options.length; i++) {
+            if (sel.options[i].value === seatId) { sel.selectedIndex = i; found = true; break; }
+          }
+          if (!found) {
+            // 一覧に無い席は新しい option を追加（座席表起点の単卓など）
+            const opt = document.createElement('option');
+            opt.value = seatId; opt.textContent = seatId + '（指定）';
+            sel.appendChild(opt);
+            sel.value = seatId;
+          }
+        }
+      } catch (e) {}
+      overlay.remove();
+    });
+  });
+  box.querySelector('#seatPickerClearBtn').onclick = function() {
+    state.preselectedSeat = null;
+    if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+    try {
+      const sel = document.getElementById('seatPref');
+      if (sel) sel.value = '自動';
+    } catch (e) {}
+    overlay.remove();
+  };
+  box.querySelector('#seatPickerCloseBtn').onclick = function() { overlay.remove(); };
+}
+
+// ★ Claude (2026-06-21): TIME_SLOTS 全部を一覧表示するモーダル。タップで即 state.time を更新。
+function openStep2TimePicker() {
+  if (typeof TIME_SLOTS === 'undefined') return;
+  const existing = document.getElementById('step2TimePickerOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'step2TimePickerOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.maxWidth = '380px';
+  box.innerHTML = '<h3>時刻を選択</h3>'
+                + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">'
+                +   '現在の選択：<strong>' + (state.time || '--:--') + '</strong>'
+                + '</div>'
+                + '<div id="step2TimePickerGrid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;"></div>'
+                + '<button type="button" class="secondary" id="step2TimePickerClose" style="margin-top:12px;width:100%;">閉じる</button>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  const grid = box.querySelector('#step2TimePickerGrid');
+  TIME_SLOTS.forEach(function(t) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = t;
+    btn.style.cssText = 'padding:8px 4px;border:1px solid var(--border);border-radius:6px;'
+                     + 'font-size:13px;font-weight:600;cursor:pointer;'
+                     + (t === state.time
+                          ? 'background:var(--primary);color:#fff;border-color:var(--primary);'
+                          : 'background:#fff;color:var(--text);');
+    btn.onclick = function() {
+      state.time = t;
+      syncStep2Time();
+      overlay.remove();
+    };
+    grid.appendChild(btn);
+  });
+  box.querySelector('#step2TimePickerClose').onclick = function() { overlay.remove(); };
 }
 
 // step2 で人数を変更
@@ -5963,7 +6204,14 @@ function confirmReservation() {
       seat = state.preselectedSeat;
       const cap = getSeatCapacity(seat);
       if (cap < state.people) {
-        alert('選択された席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。\n「席のご希望」プルダウンで別の席を選ぶか、画面上部の「解除」ボタンでおまかせに戻してください。');
+        // ★ Claude (2026-06-21): 人数オーバー時は alert ではなく席選択モーダルを開く（戻らずに別席を選べる）
+        try {
+          if (typeof openSeatPickerModal === 'function') {
+            openSeatPickerModal();
+          } else {
+            alert('選択席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。');
+          }
+        } catch (e) {}
         return;
       }
     } else {
