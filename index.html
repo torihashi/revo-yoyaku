@@ -6194,10 +6194,22 @@ function getSelectedNoteBadges() {
     .filter(Boolean);
 }
 
+function stripNoteBadgeText(rawNotes) {
+  return String(rawNotes || '')
+    .replace(/【(?:料理あり|二次会|後日)】\s*/g, '')
+    .trim();
+}
+
 function buildNotesWithBadges(rawNotes) {
   const badges = getSelectedNoteBadges();
   const badgeText = badges.map(function(b) { return '【' + b + '】'; }).join('');
   const notes = (rawNotes || '').trim();
+  return (badgeText + (notes ? (badgeText ? ' ' : '') + notes : '')).trim();
+}
+
+function buildNotesWithBadgeList(badges, rawNotes) {
+  const badgeText = (badges || []).map(function(b) { return '【' + b + '】'; }).join('');
+  const notes = stripNoteBadgeText(rawNotes);
   return (badgeText + (notes ? (badgeText ? ' ' : '') + notes : '')).trim();
 }
 
@@ -6947,6 +6959,8 @@ function openEditModal(resId) {
 
   const otherStore = (resStore === 'revolverd') ? 'torihashi' : 'revolverd';
   const otherLabel = (otherStore === 'revolverd') ? '🥃 リボ' : '🐔 鳥はし';
+  const editNoteLabels = ['料理あり', '二次会', '後日'];
+  const editNoteText = stripNoteBadgeText(r.notes || '');
   overlay.innerHTML =
     '<div class="modal" style="max-width:440px;">'
     + '<h3 style="margin-top:0;">予約を編集（' + (resStore === 'revolverd' ? '🥃 リボ' : '🐔 鳥はし') + '）</h3>'
@@ -6957,7 +6971,15 @@ function openEditModal(resId) {
     + '<div class="field"><label>コース</label><select id="editCourse">' + courseOpts + '</select></div>'
     + '<div class="field"><label>お名前（カナ）</label><input type="text" id="editName" value="' + (r.name || '') + '" /></div>'
     + '<div class="field"><label>電話番号</label><input type="tel" id="editPhone" inputmode="numeric" value="' + (r.phone || '') + '" /></div>'
-    + '<div class="field"><label>特記</label><textarea id="editNotes" rows="2">' + (r.notes || '') + '</textarea></div>'
+    + '<div class="field"><label>特記</label>'
+    +   '<div class="note-badge-row" id="editNoteBadgeRow">'
+    +     editNoteLabels.map(function(label) {
+            const selected = String(r.notes || '').indexOf(label) >= 0 ? ' selected' : '';
+            return '<button type="button" class="note-badge-btn edit-note-badge-btn' + selected + '" data-edit-note-badge="' + label + '">' + label + '</button>';
+          }).join('')
+    +   '</div>'
+    +   '<textarea id="editNotes" rows="2">' + escHtml(editNoteText) + '</textarea>'
+    + '</div>'
     + '<div style="display:flex;gap:8px;margin-top:8px;">'
     + '<button class="secondary" id="cancelEditBtn" style="flex:1;">やめる</button>'
     + '<button class="primary" id="saveEditBtn" style="flex:1;">保存</button>'
@@ -6971,6 +6993,11 @@ function openEditModal(resId) {
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
+  overlay.querySelectorAll('.edit-note-badge-btn[data-edit-note-badge]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      btn.classList.toggle('selected');
+    });
+  });
   document.getElementById('cancelEditBtn').addEventListener('click', function() { overlay.remove(); });
   document.getElementById('saveEditBtn').addEventListener('click', function() {
     const newDate   = document.getElementById('editDate').value;
@@ -6979,7 +7006,10 @@ function openEditModal(resId) {
     const newCourse = document.getElementById('editCourse').value || r.course;
     const newName   = document.getElementById('editName').value.trim() || r.name;
     const newPhone  = document.getElementById('editPhone').value.trim();
-    const newNotes  = document.getElementById('editNotes').value;
+    const editBadges = Array.prototype.slice.call(overlay.querySelectorAll('.edit-note-badge-btn.selected[data-edit-note-badge]'))
+      .map(function(btn) { return btn.getAttribute('data-edit-note-badge') || ''; })
+      .filter(Boolean);
+    const newNotes  = buildNotesWithBadgeList(editBadges, document.getElementById('editNotes').value);
 
     r.date   = newDate;
     r.time   = newTime;
