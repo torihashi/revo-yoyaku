@@ -7846,6 +7846,14 @@ function toggleResExpand(summaryEl) {
   item.classList.toggle('expanded');
 }
 
+function noteBadgeDisplayLabel(notes) {
+  const text = String(notes || '');
+  if (text.indexOf('二次会') >= 0) return '二次会';
+  if (text.indexOf('料理あり') >= 0) return '料理あり';
+  if (text.indexOf('後日') >= 0) return '後日';
+  return '';
+}
+
 // 一覧から新規予約へ：表示中の日付を引き継いで遷移
 function quickNewReservationFromList() {
   const listDate = document.getElementById('listDate');
@@ -7980,7 +7988,8 @@ function renderReservationList() {
         miniCourseHtml = '<span class="ri-course-mini ' + cls + '">' + icon + ' ' + shortLabel + '</span>';
       } else if (course && (course.id === 'S' || course.id === 'RS')) {
         // 席のみ
-        miniCourseHtml = '<span class="ri-course-mini seat-only">席のみ</span>';
+        const noteLabel = noteBadgeDisplayLabel(r.notes);
+        miniCourseHtml = '<span class="ri-course-mini seat-only">' + (noteLabel || '席のみ') + '</span>';
       }
       const nameWithMark = (sourceMark ? '<span title="' + sourceTitle + '" style="margin-right:3px">' + sourceMark + '</span>' : '') + r.name + '様';
       // ★ Claude (2026-06-21): 特記事項があれば小アイコンを表示。tooltip(title属性)に本文を入れて長押し/ホバーで確認可能。
@@ -8604,7 +8613,8 @@ function renderCalendarGrid(container, animDirection) {
           const isSeatOnly = !course || !course.type || course.type === '席だけ' || course.type === '席のみ' || course.id === 'S' || course.id === 'RS';
           if (isSeatOnly) {
             chipCls += ' seat-only';
-            txt = (peopleText ? peopleText + ' ' : '') + nm;
+            const noteLabel = noteBadgeDisplayLabel(r.notes);
+            txt = (peopleText ? peopleText + ' ' : '') + (noteLabel || nm);
           } else {
             const type = course.type || '';
             if (type.indexOf('プレミアム') >= 0 || course.id === 'E') chipCls += ' premium';
