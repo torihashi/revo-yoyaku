@@ -5914,91 +5914,102 @@ function toKatakana(s) {
 }
 
 function confirmReservation() {
-  // 🛡 安全弁：入力欄の最新の日付を必ず state にも反映（バグ防止）
-  const resDateInp = document.getElementById('resDate');
-  if (resDateInp && resDateInp.value && state.date !== resDateInp.value) {
-    state.date = resDateInp.value;
-  }
-  // state.date が空ならエラー
-  if (!state.date) {
-    alert('日付が未設定です。最初から入力をやり直してください。');
-    return;
-  }
+  try {
+    const resDateInp = document.getElementById('resDate');
+    if (resDateInp && resDateInp.value && state.date !== resDateInp.value) {
+      state.date = resDateInp.value;
+    }
+    if (!state.date) { alert('日付が未設定です。最初から入力をやり直してください。'); return; }
+    if (!state.time) { alert('時刻を選択してください'); return; }
 
-  // 名前はカタカナに正規化
-  const nameInput = document.getElementById('custName');
-  nameInput.value = toKatakana(nameInput.value.trim());
-  const name = nameInput.value;
-  const phone = document.getElementById('custPhone').value.trim();
-  const kidInfant = parseInt(document.getElementById('kidInfant').value) || 0;
-  const kidElementary = parseInt(document.getElementById('kidElementary').value) || 0;
-  const seatPref = document.getElementById('seatPref').value;
-  const notes = document.getElementById('notes').value.trim();
+    const nameInput = document.getElementById('custName');
+    const phoneInput = document.getElementById('custPhone');
+    if (!nameInput || !phoneInput) { alert('入力欄の読み込みに失敗しました。画面を再読み込みしてください。'); return; }
+    nameInput.value = toKatakana((nameInput.value || '').trim());
+    const name = nameInput.value;
+    const phone = (phoneInput.value || '').trim();
+    const kidInfantEl = document.getElementById('kidInfant');
+    const kidElementaryEl = document.getElementById('kidElementary');
+    const seatPrefEl = document.getElementById('seatPref');
+    const notesEl = document.getElementById('notes');
+    const kidInfant = parseInt(kidInfantEl && kidInfantEl.value, 10) || 0;
+    const kidElementary = parseInt(kidElementaryEl && kidElementaryEl.value, 10) || 0;
+    const seatPref = seatPrefEl ? seatPrefEl.value : '自動';
+    const notes = notesEl ? (notesEl.value || '').trim() : '';
 
-  if (!name) { alert('お名前を入力してください'); return; }
-  if (!phone) { alert('お電話番号を入力してください'); return; }
-  if (!state.selectedCourse) { alert('コースを選択してください'); return; }
+    if (!name) { alert('お名前を入力してください'); return; }
+    if (!phone) { alert('お電話番号を入力してください'); return; }
+    if (!state.selectedCourse) { alert('コースを選択してください'); return; }
 
-  const adultCount = state.people - kidInfant - kidElementary;
-  const course = getCourses().find(c => c.id === state.selectedCourse);
-  if (course.minPeople > adultCount) {
-    alert(`${course.name} は${course.minPeople}名以上（中学生以上）が必要です`);
-    return;
-  }
-
-  // 席の決定
-  // 優先順位: 「席のご希望」が明示的（自動以外）→ プリセットより優先
-  //          ① ドロップダウン（自動以外）② 座席表プリセット ③ 未設定
-  let seat;
-  if (seatPref && seatPref !== '自動') {
-    // ドロップダウン優先 → プリセットも解除
-    seat = seatPref;
-    state.preselectedSeat = null;
-    if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
-  } else if (state.preselectedSeat) {
-    seat = state.preselectedSeat;
-    const cap = getSeatCapacity(seat);
-    if (cap < state.people) {
-      alert('選択された席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。\n「席のご希望」プルダウンで別の席を選ぶか、画面上部の「解除」ボタンでおまかせに戻してください。');
+    const adultCount = Math.max(0, (parseInt(state.people, 10) || 0) - kidInfant - kidElementary);
+    const course = getCourses().find(function(c) { return c.id === state.selectedCourse; });
+    if (!course) {
+      state.selectedCourse = null;
+      if (typeof renderCourseGrid === 'function') renderCourseGrid();
+      alert('選択中のコースを読み込めませんでした。もう一度コースを選択してください。');
       return;
     }
-  } else {
-    seat = '未設定';
+    if (course.minPeople > adultCount) {
+      alert(course.name + ' は' + course.minPeople + '名以上（中学生以上）が必要です');
+      return;
+    }
+
+    let seat;
+    if (seatPref && seatPref !== '自動') {
+      seat = seatPref;
+      state.preselectedSeat = null;
+      if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+    } else if (state.preselectedSeat) {
+      seat = state.preselectedSeat;
+      const cap = getSeatCapacity(seat);
+      if (cap < state.people) {
+        alert('選択された席「' + seat + '」の収容人数（' + cap + '名）が予約人数（' + state.people + '名）に足りません。\n「席のご希望」プルダウンで別の席を選ぶか、画面上部の「解除」ボタンでおまかせに戻してください。');
+        return;
+      }
+    } else {
+      seat = '未設定';
+    }
+
+    const data = {
+      id: genId(), date: state.date, time: state.time, people: state.people,
+      name: name, phone: phone, kidInfant: kidInfant, kidElementary: kidElementary,
+      course: state.selectedCourse, seat: seat, notes: notes,
+      handwriting: getHandwritingDataURL('memoCanvas'),
+      status: state.people >= 5 ? 'confirmed' : 'tentative',
+      source: 'pwa',
+      store: currentStore,
+      createdAt: Date.now()
+    };
+    state.pending = data;
+
+    const wkJp = ['日','月','火','水','木','金','土'];
+    const dObj = new Date(data.date + 'T00:00:00');
+    const dow = isNaN(dObj.getTime()) ? '' : '（' + wkJp[dObj.getDay()] + '）';
+    const summary = document.getElementById('confirmSummary');
+    if (!summary) { alert('確認画面の読み込みに失敗しました。画面を再読み込みしてください。'); return; }
+    summary.innerHTML =
+      '<div class="summary-row"><span class="label">日時</span><span class="value">' + escHtml(data.date + dow + ' ' + data.time) + '</span></div>' +
+      '<div class="summary-row"><span class="label">人数</span><span class="value">' + escHtml(data.people + '名（中学生以上' + adultCount + '・小学生' + kidElementary + '・幼児' + kidInfant + '）') + '</span></div>' +
+      '<div class="summary-row"><span class="label">お名前</span><span class="value">' + escHtml(data.name + '様') + '</span></div>' +
+      '<div class="summary-row"><span class="label">お電話</span><span class="value">' + escHtml(data.phone) + '</span></div>' +
+      '<div class="summary-row"><span class="label">コース</span><span class="value">' + escHtml(course.id + ': ' + course.name) + '</span></div>' +
+      '<div class="summary-row"><span class="label">席</span><span class="value">' + escHtml(data.seat) + '</span></div>' +
+      '<div class="summary-row"><span class="label">特記</span><span class="value">' + escHtml(data.notes || 'なし') + '</span></div>' +
+      '<div class="summary-row"><span class="label">ステータス</span><span class="value">' + (data.status === 'confirmed' ? '確定（団体・席ロック）' : '仮押さえ（席は当日確定）') + '</span></div>';
+
+    document.getElementById('step1').classList.add('hidden');
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('step3').classList.remove('hidden');
+    const submitBtn = document.getElementById('submitReservationBtn');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'この内容で予約を確定する';
+    }
+    state.step = 3;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (err) {
+    alert('予約確認でエラーが出ました: ' + String(err));
   }
-
-  const data = {
-    id: genId(), date: state.date, time: state.time, people: state.people,
-    name, phone, kidInfant, kidElementary,
-    course: state.selectedCourse, seat, notes,
-    handwriting: getHandwritingDataURL('memoCanvas'),
-    status: state.people >= 5 ? 'confirmed' : 'tentative',
-    source: 'pwa',
-    store: currentStore,
-    createdAt: Date.now(),
-  };
-  state.pending = data;
-
-  // 確認画面表示（日時に曜日を追加）
-  const _wkJp = ['日','月','火','水','木','金','土'];
-  const _d = new Date(data.date + 'T00:00:00');
-  const _dow = isNaN(_d.getTime()) ? '' : '（' + _wkJp[_d.getDay()] + '）';
-  const summary = document.getElementById('confirmSummary');
-  summary.innerHTML = `
-    <div class="summary-row"><span class="label">日時</span><span class="value">${data.date}${_dow} ${data.time}</span></div>
-    <div class="summary-row"><span class="label">人数</span><span class="value">${data.people}名（中学生以上${adultCount}・小学生${kidElementary}・幼児${kidInfant}）</span></div>
-    <div class="summary-row"><span class="label">お名前</span><span class="value">${data.name}様</span></div>
-    <div class="summary-row"><span class="label">お電話</span><span class="value">${data.phone}</span></div>
-    <div class="summary-row"><span class="label">コース</span><span class="value">${course.id}: ${course.name}</span></div>
-    <div class="summary-row"><span class="label">席</span><span class="value">${data.seat}</span></div>
-    <div class="summary-row"><span class="label">特記</span><span class="value">${data.notes || 'なし'}</span></div>
-    <div class="summary-row"><span class="label">ステータス</span><span class="value">${data.status === 'confirmed' ? '確定（団体・席ロック）' : '仮押さえ（席は当日確定）'}</span></div>
-  `;
-
-  document.getElementById('step1').classList.add('hidden');
-  document.getElementById('step2').classList.add('hidden');
-  document.getElementById('step3').classList.remove('hidden');
-  state.step = 3;
-  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 function submitReservation() {
