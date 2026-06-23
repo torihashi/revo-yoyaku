@@ -1440,12 +1440,24 @@ select.time-select option:disabled { color: #aaa; }
 }
 .bottom-nav button {
   flex: 1; background: transparent; border: none;
-  padding: 8px; cursor: pointer;
+  padding: 7px 8px; cursor: pointer;
   display: flex; flex-direction: column; align-items: center; gap: 2px;
   font-size: 11px; color: var(--muted); font-weight: 600;
+  border-top: 3px solid transparent;
+  border-radius: 8px 8px 0 0;
+  transition: background .15s, color .15s, border-color .15s;
 }
-.bottom-nav button.active { color: var(--primary); }
+.bottom-nav button.active {
+  color: var(--primary-dark);
+  background: var(--primary-light);
+  border-top-color: var(--primary);
+  font-weight: 800;
+}
 .bottom-nav button .icon { font-size: 22px; }
+.bottom-nav button.active .icon {
+  transform: translateY(-1px);
+  filter: saturate(1.2);
+}
 
 /* ========================================
    アクティビティログ
