@@ -2078,6 +2078,20 @@ select.time-select option:disabled { color: #aaa; }
     <div id="holidayDisplay"></div>
   </div>
 
+  <!-- ★ Claude (2026-06-22): 幽霊予約クリーンアップ（管理者のみ表示）
+       GCalへの同期に失敗してlocalStorageだけに残った予約を、管理者が個別確認のうえ削除する。
+       自動削除はしない（誤削除リスク回避） -->
+  <div class="card hidden" id="ghostCleanupCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>🧹 幽霊予約クリーンアップ <span style="font-size:11px;font-weight:400;color:var(--muted);">（管理者のみ）</span></span>
+      <button id="ghostScanBtn" type="button" onclick="openGhostCleanupModal()" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔍 スキャン</button>
+    </h2>
+    <div style="font-size:11px;color:var(--muted);line-height:1.6;">
+      Googleカレンダーに同期されていない（gcalEventIdを持たない）PWA作成の予約を検出します。<br>
+      ネットワーク不調等で同期に失敗した予約や、誤入力された予約を手動で除去できます。
+    </div>
+  </div>
+
   <!-- アクティビティログ（席情報タブの末尾・全員閲覧可） -->
   <div class="card" id="activityLogCard">
     <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
@@ -5531,6 +5545,11 @@ function switchTab(name) {
   if (name === 'info') {
     // 席情報タブ：アクティビティログを再描画
     try { fetchAndRenderActivityLog(); } catch (e) {}
+    // ★ Claude (2026-06-22): 管理者なら幽霊掃除カードを表示
+    try {
+      const gc = document.getElementById('ghostCleanupCard');
+      if (gc) gc.classList.toggle('hidden', !(currentUser && currentUser.isAdmin));
+    } catch (e) {}
   }
   // ★ 一覧 or 座席表へ切替時、最近の同期から30秒以上経っていればバックグラウンド同期して両ビューを更新
   if ((name === 'list' || name === 'seatmap') && isWebhookConfigured()) {
@@ -5843,6 +5862,160 @@ function changeStep2Time(deltaMin) {
   syncStep2Time();
   // 注: rerenderSeatPref はオプション一覧自体（時刻非依存）を再描画してユーザーの選択を消すので呼ばない。
   //     使用席状態は openSeatPickerModal 内で都度計算する。
+}
+
+// ★ Claude (2026-06-22): 幽霊予約クリーンアップモーダル（管理者のみ）。
+//   GCalに同期されていない (gcalEventId が空 or 未設定) localStorage上の予約を検出して
+//   個別チェックボックスで選択削除する。安全策:
+//     - 管理者でなければ拒否
+//     - 直近10分以内に作成された予約は除外（同期前の正常な予約が誤検出されないように）
+//     - 削除時に確認ダイアログ + アクティビティログに記録
+//   この関数は localStorage のみを変更し、GCal側には触らない。
+function openGhostCleanupModal() {
+  if (!currentUser || !currentUser.isAdmin) {
+    alert('幽霊予約の削除は管理者のみが実行できます。');
+    return;
+  }
+
+  const GRACE_MS = 10 * 60 * 1000; // 10分間は最近作成扱いで除外
+  const nowMs = Date.now();
+  const ghosts = reservations.filter(function(r) {
+    if (!r) return false;
+    // 既にキャンセル済みは UI 上で見えないので対象外
+    if (r.status === 'cancelled') return false;
+    // GCalイベントIDが存在しない＝同期未完了か失敗
+    const noEventId = !r.gcalEventId;
+    if (!noEventId) return false;
+    // PWA直接作成のみ対象（Yahoo!/AutoReserveは取込時に必ずIDが付くので、IDなしは想定外＝対象外でもいい
+    //  が、念のためsource判定する）
+    const isPwa = !r.source || r.source === 'pwa';
+    if (!isPwa) return false;
+    // 直近作成は除外（同期処理の途中の可能性）
+    const created = r.createdAt || 0;
+    if (created && (nowMs - created) < GRACE_MS) return false;
+    return true;
+  });
+
+  // ソート: 日付昇順 → 時刻昇順
+  ghosts.sort(function(a, b) {
+    const dk = (a.date || '').localeCompare(b.date || '');
+    if (dk !== 0) return dk;
+    return (a.time || '').localeCompare(b.time || '');
+  });
+
+  const existing = document.getElementById('ghostCleanupOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'ghostCleanupOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.cssText = 'max-width:520px;max-height:85vh;overflow-y:auto;';
+
+  // タイトル
+  let html = '<h3 style="margin-top:0;display:flex;align-items:center;gap:8px;">🧹 幽霊予約クリーンアップ</h3>';
+
+  if (ghosts.length === 0) {
+    html += '<div style="padding:18px;background:#e8f5e9;border-radius:8px;color:#1b5e20;font-size:13px;text-align:center;">'
+         +    '✅ Googleカレンダーに同期されていない予約は見つかりませんでした。'
+         +  '</div>'
+         + '<div style="margin-top:14px;display:flex;gap:6px;">'
+         +   '<button type="button" class="secondary" id="ghostCloseBtn" style="flex:1;">閉じる</button>'
+         + '</div>';
+    box.innerHTML = html;
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+    box.querySelector('#ghostCloseBtn').onclick = function() { overlay.remove(); };
+    return;
+  }
+
+  html += '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px;">'
+       +    '⚠️ 以下はPWA作成後にGoogleカレンダーへ同期されなかった予約です（' + ghosts.length + '件）。<br>'
+       +    '削除したい予約にチェックを入れて「選択した予約を削除」を押してください。<br>'
+       +    '<span style="color:#c62828;">この操作は取り消せません。</span>'
+       +  '</div>'
+       +  '<div style="margin-bottom:8px;">'
+       +    '<button type="button" id="ghostSelectAllBtn" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;font-family:inherit;">全選択</button>'
+       +    '<button type="button" id="ghostSelectNoneBtn" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;font-family:inherit;margin-left:6px;">全解除</button>'
+       +  '</div>';
+
+  html += '<div id="ghostList" style="border:1px solid var(--border);border-radius:8px;">';
+  ghosts.forEach(function(r, idx) {
+    const courseObj = (COURSES.concat(typeof REVO_COURSES !== 'undefined' ? REVO_COURSES : []))
+      .find(function(c) { return c.id === r.course; });
+    const storeMark = (r.store === 'revolverd' ? '🥃リボ' : '🐔鳥はし');
+    const createdStr = r.createdAt ? new Date(r.createdAt).toLocaleString('ja-JP') : '不明';
+    const courseStr  = courseObj ? courseObj.name : (r.course || '—');
+    html += '<label style="display:flex;align-items:flex-start;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);cursor:pointer;">'
+         +    '<input type="checkbox" class="ghost-chk" data-rid="' + escapeAttr(r.id) + '" style="margin-top:3px;flex-shrink:0;" />'
+         +    '<div style="flex:1;font-size:13px;line-height:1.5;">'
+         +      '<div style="font-weight:700;">'
+         +        escapeAttr(r.date || '?') + ' ' + escapeAttr(r.time || '--:--')
+         +        ' / <span style="color:#c62828;">' + (r.people != null ? r.people + '名' : '?名') + '</span>'
+         +        ' / ' + escapeAttr(r.name || '不明') + '様'
+         +      '</div>'
+         +      '<div style="color:var(--muted);font-size:11px;margin-top:2px;">'
+         +        storeMark + ' / 席: ' + escapeAttr(r.seat || '未設定') + ' / コース: ' + escapeAttr(courseStr)
+         +      '</div>'
+         +      '<div style="color:var(--muted);font-size:10.5px;margin-top:2px;">'
+         +        'ID: ' + escapeAttr(r.id) + ' / 作成: ' + escapeAttr(createdStr)
+         +      '</div>'
+         +    '</div>'
+         +  '</label>';
+  });
+  html += '</div>';
+
+  html += '<div style="display:flex;gap:6px;margin-top:14px;">'
+       +    '<button type="button" class="secondary" id="ghostCloseBtn" style="flex:1;">キャンセル</button>'
+       +    '<button type="button" id="ghostDeleteBtn" style="flex:1;background:#c62828;color:#fff;border:none;padding:10px;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 選択した予約を削除</button>'
+       +  '</div>';
+
+  box.innerHTML = html;
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  // 全選択 / 全解除
+  box.querySelector('#ghostSelectAllBtn').onclick = function() {
+    box.querySelectorAll('.ghost-chk').forEach(function(c) { c.checked = true; });
+  };
+  box.querySelector('#ghostSelectNoneBtn').onclick = function() {
+    box.querySelectorAll('.ghost-chk').forEach(function(c) { c.checked = false; });
+  };
+  box.querySelector('#ghostCloseBtn').onclick = function() { overlay.remove(); };
+  box.querySelector('#ghostDeleteBtn').onclick = function() {
+    const checked = Array.from(box.querySelectorAll('.ghost-chk:checked'));
+    if (checked.length === 0) {
+      alert('削除する予約を選択してください。');
+      return;
+    }
+    if (!confirm(checked.length + ' 件の予約を完全に削除します。\nこの操作は取り消せません。\n\n本当に実行しますか？')) {
+      return;
+    }
+    const idsToDelete = checked.map(function(c) { return c.getAttribute('data-rid'); });
+    const deletedItems = [];
+    // reservations から削除（あえて filter で新規配列を作らず、splice の方が外部参照保持に安全）
+    for (let i = reservations.length - 1; i >= 0; i--) {
+      if (idsToDelete.indexOf(reservations[i].id) >= 0) {
+        deletedItems.push(reservations[i]);
+        reservations.splice(i, 1);
+      }
+    }
+    // 保存＋全ビュー再描画は saveReservations 側に任せる
+    try { saveReservations(); } catch (e) {}
+    // アクティビティログ（記録のみ。削除そのものは戻せない）
+    try {
+      if (typeof logActivity === 'function') {
+        const summary = deletedItems.map(function(r) {
+          return r.date + ' ' + r.time + ' ' + (r.name || '?') + '様(' + (r.people || '?') + '名)';
+        }).join(' / ');
+        logActivity('🧹 幽霊予約削除', deletedItems.length + '件', summary);
+      }
+    } catch (e) {}
+    overlay.remove();
+    alert(deletedItems.length + ' 件の予約を削除しました。');
+  };
 }
 
 // ★ Claude (2026-06-21): 席選択モーダル。
