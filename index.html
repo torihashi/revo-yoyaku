@@ -4542,6 +4542,24 @@ function parseNotesFromDescription(desc) {
   return out.join(' / ');
 }
 
+// ★ Claude (2026-06-22): 通常予約のカレンダー説明文から電話番号を復元するヘルパー。
+//   - PWA直接作成 / Yahoo!/AutoReserve取込 とも `電話: …` 行を description に書いている
+//   - "なし" や空文字は無視
+//   - 数字以外（ハイフン等）が混入していても文字列としてそのまま返す（既存表示と統一）
+function parsePhoneFromDescription(desc) {
+  if (!desc) return '';
+  const lines = String(desc).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (line.indexOf('電話:') === 0 || line.indexOf('電話：') === 0) {
+      const v = line.replace(/^電話[:：]\s*/, '').trim();
+      if (!v || v === 'なし') return '';
+      return v;
+    }
+  }
+  return '';
+}
+
 // お土産予約の説明文から商品内訳・合計・点数等を復元
 function parseTakeoutDescription(desc) {
   const out = { entries: [], total: 0, count: 0, phone: '', notes: '', summary: '' };
@@ -4657,6 +4675,12 @@ function mergeFromCalendar(items) {
         } else if (!incomingNotes && isPlaceholder) {
           existing.notes = ''; changed = true;
         }
+        // ★ Claude (2026-06-22): 電話番号も同様に description から復元（一覧詳細で端末間共有されない問題を修正）。
+        //   端末A で電話番号を保存 → GCal description に書かれる → 端末B 同期時にこの行で取り戻す。
+        const incomingPhone = parsePhoneFromDescription(ev.description || '');
+        if (incomingPhone && incomingPhone !== (existing.phone || '')) {
+          existing.phone = incomingPhone; changed = true;
+        }
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
       if (existing.time !== evTime)  { existing.time = evTime; changed = true; }
@@ -4689,11 +4713,13 @@ function mergeFromCalendar(items) {
       // ★ Claude (2026-06-21): 新規取込時は description から特記事項を復元してセット。
       //   見つからなければ空文字（プレースホルダ"(GCalから自動取込)"はリスト表示で本物の特記と区別しづらいので排除）。
       const parsedNotes = parseNotesFromDescription(ev.description || '');
+      // ★ Claude (2026-06-22): 電話番号も同時に復元（PWA直接・Yahoo!/AutoReserve いずれも description に「電話: …」で書かれる）
+      const parsedPhone = parsePhoneFromDescription(ev.description || '');
       const newRes = {
         id: 'GC-' + ev.id.substring(0, 10),
         date: evDate, time: evTime,
         people: isTakeout ? 0 : (peopleFromTitle || 2),
-        name: name, phone: '',
+        name: name, phone: parsedPhone,
         kidInfant: 0, kidElementary: 0,
         course: inferredCourse, seat: '未設定',
         notes: parsedNotes,
