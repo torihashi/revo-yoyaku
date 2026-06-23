@@ -8087,6 +8087,14 @@ function isSeatOnlyCourse(course) {
   return !course || !course.type || course.type === '席だけ' || course.type === '席のみ' || course.id === 'S' || course.id === 'RS';
 }
 
+function reservationDisplayCourseLabel(r) {
+  const noteLabel = noteBadgeDisplayLabel(r && r.notes);
+  if (noteLabel) return noteLabel;
+  const course = COURSES.concat(REVO_COURSES).find(function(c) { return r && c.id === r.course; });
+  if (isSeatOnlyCourse(course)) return '';
+  return course.shortName || course.name || course.type || '';
+}
+
 // 一覧から新規予約へ：表示中の日付を引き継いで遷移
 function quickNewReservationFromList() {
   const listDate = document.getElementById('listDate');
@@ -8533,10 +8541,10 @@ function renderUnassignedRail(dayRes) {
     slot.className = 'un-slot';
     const r = unassigned[i];
     if (r) {
-      slot.innerHTML = '<strong>' + r.time + ' ' + r.name + '様</strong>'
-        + '<div class="meta">' + r.people + '名'
-        + (r.seat && isPendingSeat(r.seat) ? '・' + r.seat.split('(')[0] : '')
-        + '</div>';
+      const courseLabel = reservationDisplayCourseLabel(r);
+      slot.innerHTML = '<strong>' + escHtml(r.time || '') + '</strong>'
+        + '<div class="meta">' + escHtml((r.name || '') + '様') + '</div>'
+        + '<div class="meta">' + escHtml((r.people || 0) + '名' + (courseLabel ? '・' + courseLabel : '')) + '</div>';
       slot.draggable = true;
       slot.setAttribute('data-rid', r.id);
       slot.addEventListener('dragstart', function(e) {
