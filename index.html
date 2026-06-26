@@ -1893,6 +1893,16 @@ select.time-select option:disabled { color: #aaa; }
       <div class="summary-row"><span class="label">使用率</span><span class="value" id="dayUsage">0%</span></div>
       <div class="summary-row"><span class="label">席割振り発動 (60%)</span><span class="value" id="thresholdStatus">未到達</span></div>
     </div>
+    <!-- ★ Claude (2026-06-22): 座席表と同じ「本日のシフト」欄。renderStaffRail が両レールに同じHTMLを書き込む。 -->
+    <div class="staff-rail" id="listStaffRail" style="margin-top:14px;">
+      <div class="staff-rail-header">
+        <span>👥 本日のシフト <span id="listStaffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
+        <button type="button" class="staff-add-btn" onclick="openStaffShiftModal()">＋ シフト追加</button>
+      </div>
+      <div id="listStaffRailContent" class="staff-rail-content">
+        <div class="staff-empty">読み込み中...</div>
+      </div>
+    </div>
   </div>
 </section>
 
@@ -4303,14 +4313,27 @@ function fetchTimecard(date, store, callback) {
 }
 
 // スタッフシフトレール描画（カレンダー予定＋タイムカード実績のマージ）
+// ★ Claude (2026-06-22): 座席表タブと一覧タブの両方のレールに同じ内容を反映するよう拡張。
+//   `_getStaffRailContainers()` ヘルパーで全ての対象要素を集約し、HTMLを各所にミラーリングする。
+function _getStaffRailContainers() {
+  return Array.prototype.slice.call(document.querySelectorAll('.staff-rail-content'));
+}
+function _getStaffRailLabels() {
+  // 旧IDと一覧用の新IDの両方を対象に
+  const ids = ['staffStoreLabel', 'listStaffStoreLabel'];
+  return ids.map(function(id) { return document.getElementById(id); }).filter(Boolean);
+}
+function _setStaffRailHtml(html) {
+  _getStaffRailContainers().forEach(function(el) { el.innerHTML = html; });
+}
 function renderStaffRail() {
-  const content = document.getElementById('staffRailContent');
-  const storeLabel = document.getElementById('staffStoreLabel');
-  if (!content) return;
+  const containers = _getStaffRailContainers();
+  if (containers.length === 0) return;
   const date = smState.date || todayStr();
-  if (storeLabel) storeLabel.textContent = '【' + (currentStore === 'revolverd' ? 'リボ・バイト' : '鳥はしバイト') + '・' + date + '】';
+  const labelText = '【' + (currentStore === 'revolverd' ? 'リボ・バイト' : '鳥はしバイト') + '・' + date + '】';
+  _getStaffRailLabels().forEach(function(el) { el.textContent = labelText; });
 
-  content.innerHTML = '<div class="staff-empty">読み込み中...</div>';
+  _setStaffRailHtml('<div class="staff-empty">読み込み中...</div>');
 
   // 並行取得：カレンダーのシフト予定 + タイムカード実績
   Promise.all([
@@ -4327,7 +4350,8 @@ function renderStaffRail() {
     });
 
     if (shifts.length === 0 && timecards.length === 0) {
-      content.innerHTML = '<div class="staff-empty">この日のシフト登録はありません</div>';
+      // ★ Claude (2026-06-22): 両レールに反映
+      _setStaffRailHtml('<div class="staff-empty">この日のシフト登録はありません</div>');
       return;
     }
 
@@ -4428,15 +4452,18 @@ function renderStaffRail() {
                }).join('')
            + '</div>';
     }
-    content.innerHTML = html;
-    // 管理者のみ：削除ボタンのクリックを bind
+    // ★ Claude (2026-06-22): 両レールに反映
+    _setStaffRailHtml(html);
+    // 管理者のみ：削除ボタンのクリックを bind（全レールで反応するよう）
     if (canDeleteShift()) {
-      content.querySelectorAll('.staff-delete-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-          e.stopPropagation();
-          const id = btn.getAttribute('data-shift-id');
-          const name = btn.getAttribute('data-shift-name');
-          deleteStaffShiftEvent(id, currentStore, name);
+      _getStaffRailContainers().forEach(function(cont) {
+        cont.querySelectorAll('.staff-delete-btn').forEach(function(btn) {
+          btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const id = btn.getAttribute('data-shift-id');
+            const name = btn.getAttribute('data-shift-name');
+            deleteStaffShiftEvent(id, currentStore, name);
+          });
         });
       });
     }
@@ -5652,7 +5679,11 @@ function switchTab(name) {
   document.getElementById('tab-info').classList.toggle('hidden', name !== 'info');
   const tabStaff = document.getElementById('tab-staff');
   if (tabStaff) tabStaff.classList.toggle('hidden', name !== 'staff');
-  if (name === 'list') renderReservationList();
+  if (name === 'list') {
+    renderReservationList();
+    // ★ Claude (2026-06-22): 一覧タブ切替時もシフトレール再描画
+    try { renderStaffRail(); } catch (e) {}
+  }
   if (name === 'seatmap') {
     initSeatMap();
   }
