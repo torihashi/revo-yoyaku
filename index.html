@@ -4710,17 +4710,36 @@ function mergeFromCalendar(items) {
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
       if (existing.time !== evTime)  { existing.time = evTime; changed = true; }
-      // お土産の場合、商品内訳が空ならGCal側説明文から復元
-      if (existing.type === 'takeout' && (!existing.entries || existing.entries.length === 0)) {
+      // ★ Claude (2026-06-22): お土産予約も毎回 description から備考・電話・商品内訳を同期。
+      //   以前は entries が空のときだけ復元していたため、別端末で備考や商品を編集しても
+      //   既存予約に反映されなかった不具合を修正。
+      //   - 備考: 差分があれば常に上書き（!existing.notes 条件を撤廃）
+      //   - 電話: 差分があれば常に上書き
+      //   - 商品内訳: parser が中身を返したときのみ上書き（GCalが正本）
+      if (existing.type === 'takeout') {
         const tk = parseTakeoutDescription(ev.description || '');
-        if (tk.entries.length > 0) {
-          existing.entries = tk.entries;
-          existing.total = tk.total;
-          existing.count = tk.count;
-          existing.summary = tk.summary;
-          if (!existing.phone) existing.phone = tk.phone;
-          if (!existing.notes) existing.notes = tk.notes;
+        // 備考の双方向同期
+        if ((tk.notes || '') !== (existing.notes || '')) {
+          existing.notes = tk.notes || '';
           changed = true;
+        }
+        // 電話の双方向同期
+        if (tk.phone && tk.phone !== (existing.phone || '')) {
+          existing.phone = tk.phone;
+          changed = true;
+        }
+        // 商品内訳の同期（GCal側の説明にエントリが書かれていればPWAを上書き）
+        if (tk.entries.length > 0) {
+          // 同一かどうかは件数+合計で簡易判定（厳密ではないが過剰更新を抑制）
+          const before = JSON.stringify({ n: (existing.entries || []).length, t: existing.total || 0, c: existing.count || 0 });
+          const after  = JSON.stringify({ n: tk.entries.length, t: tk.total, c: tk.count });
+          if (before !== after) {
+            existing.entries = tk.entries;
+            existing.total   = tk.total;
+            existing.count   = tk.count;
+            existing.summary = tk.summary;
+            changed = true;
+          }
         }
       }
       if (changed) updated++;
@@ -7376,10 +7395,32 @@ function transferReservationToStore(resId, targetStore, mode) {
   });
 }
 
+// ★ Claude (2026-06-22): お土産編集モーダルを刷新。
+//   従来は日時・名前・電話・備考のみ編集可で「商品内訳は新規取り直し」となっていた。
+//   今回から: 商品の数量変更／削除／追加 が可能に。編集結果は GCal description にも反映。
+//   実装方針:
+//     - r.entries の作業コピーを editEntries として保持し、保存ボタン押下時に r.entries へ反映
+//     - 商品追加は TAKEOUT_PRODUCTS のカテゴリ別ピッカーを別モーダルで表示
+//     - 任意金額商品（customPrice）はその場で金額を入力
+//     - 合計・点数は描画のたび再計算してUIに表示
 function openTakeoutEditModal(resId) {
   const r = reservations.find(function(x) { return x.id === resId; });
   if (!r) return;
   if (r.status === 'cancelled') { alert('キャンセル済の予約は編集できません'); return; }
+
+  // 編集中の作業コピー（保存しないと r.entries には反映しない）
+  const editEntries = (r.entries || []).map(function(e) {
+    return {
+      id: e.id || ('e' + Date.now() + Math.random()),
+      pid: e.pid || '',
+      name: e.name || '',
+      option: e.option || '',
+      memo: e.memo || '',
+      price: parseInt(e.price, 10) || 0,
+      qty: Math.max(0, parseInt(e.qty, 10) || 0),
+      isCustom: !!e.isCustom
+    };
+  });
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
@@ -7391,28 +7432,120 @@ function openTakeoutEditModal(resId) {
     }
   }
   overlay.innerHTML =
-    '<div class="modal" style="max-width:420px;">'
+    '<div class="modal" style="max-width:480px;max-height:90vh;overflow-y:auto;">'
     + '<h3 style="margin-top:0;">🥡 お土産予約を編集</h3>'
     + '<p style="font-size:12px;color:var(--muted);margin:0 0 12px;">予約番号 ' + r.id + '</p>'
     + '<div class="field"><label>受取日</label><input type="date" id="editTkDate" value="' + r.date + '" /></div>'
     + '<div class="field"><label>受取時刻</label><select id="editTkTime">' + timeOpts.join('') + '</select></div>'
-    + '<div class="field"><label>お名前</label><input type="text" id="editTkName" value="' + (r.name || '') + '" /></div>'
-    + '<div class="field"><label>電話番号</label><input type="tel" id="editTkPhone" inputmode="numeric" value="' + (r.phone || '') + '" /></div>'
-    + '<div class="field"><label>備考</label><textarea id="editTkNotes" rows="2">' + (r.notes || '') + '</textarea></div>'
-    + '<p style="font-size:12px;color:var(--muted);margin:8px 0 0;">※ 商品内訳の変更は新規取り直しでお願いします</p>'
-    + '<div style="display:flex;gap:8px;margin-top:8px;">'
+    + '<div class="field"><label>お名前</label><input type="text" id="editTkName" value="' + escapeAttr(r.name || '') + '" /></div>'
+    + '<div class="field"><label>電話番号</label><input type="tel" id="editTkPhone" inputmode="numeric" value="' + escapeAttr(r.phone || '') + '" /></div>'
+    + '<div class="field"><label>備考</label><textarea id="editTkNotes" rows="2">' + escapeAttr(r.notes || '') + '</textarea></div>'
+    + '<div class="field" style="background:#fff8e1;padding:10px;border-radius:8px;border:1px solid #ffe082;">'
+    +   '<label style="display:flex;align-items:center;justify-content:space-between;">'
+    +     '<span>商品内訳</span>'
+    +     '<button type="button" id="addTkItemBtn" class="secondary" style="padding:4px 10px;font-size:11px;width:auto;margin:0;">＋ 商品を追加</button>'
+    +   '</label>'
+    +   '<div id="editTkEntriesList" style="margin-top:6px;font-size:12px;"></div>'
+    +   '<div id="editTkTotals" style="margin-top:8px;padding-top:6px;border-top:1px dashed #d4ad42;font-size:13px;font-weight:600;text-align:right;"></div>'
+    + '</div>'
+    + '<div style="display:flex;gap:8px;margin-top:12px;">'
     + '<button class="secondary" id="cancelTkEditBtn" style="flex:1;">やめる</button>'
     + '<button class="primary" id="saveTkEditBtn" style="flex:1;">保存</button>'
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  document.getElementById('cancelTkEditBtn').addEventListener('click', function() { overlay.remove(); });
-  document.getElementById('saveTkEditBtn').addEventListener('click', function() {
-    r.date  = document.getElementById('editTkDate').value;
-    r.time  = document.getElementById('editTkTime').value;
-    r.name  = document.getElementById('editTkName').value.trim() || r.name;
-    r.phone = document.getElementById('editTkPhone').value.trim();
-    r.notes = document.getElementById('editTkNotes').value;
+
+  // 商品リスト描画（再描画関数）
+  function rerenderEntries() {
+    const listEl = overlay.querySelector('#editTkEntriesList');
+    const totalsEl = overlay.querySelector('#editTkTotals');
+    if (editEntries.length === 0) {
+      listEl.innerHTML = '<div style="color:var(--muted);text-align:center;padding:10px;">商品がありません。「＋ 商品を追加」から追加してください</div>';
+    } else {
+      listEl.innerHTML = editEntries.map(function(e, idx) {
+        const subtotal = (e.price | 0) * (e.qty | 0);
+        const optStr   = e.option ? '（' + escapeAttr(e.option) + '）' : '';
+        const memoStr  = e.memo ? ' 📝' + escapeAttr(e.memo) : '';
+        return '<div style="display:flex;align-items:center;gap:4px;padding:5px 0;border-bottom:1px dashed #d4ad42;">'
+             +   '<div style="flex:1;min-width:0;">'
+             +     '<div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + escapeAttr(e.name) + optStr + memoStr + '</div>'
+             +     '<div style="font-size:10.5px;color:var(--muted);">' + e.price.toLocaleString() + '円 × ' + e.qty + ' = ' + subtotal.toLocaleString() + '円</div>'
+             +   '</div>'
+             +   '<button type="button" class="tk-qty-minus" data-idx="' + idx + '" style="width:24px;height:24px;padding:0;font-size:14px;border:1px solid #ccc;background:#fff;border-radius:4px;cursor:pointer;">−</button>'
+             +   '<span style="min-width:18px;text-align:center;font-weight:700;">' + e.qty + '</span>'
+             +   '<button type="button" class="tk-qty-plus"  data-idx="' + idx + '" style="width:24px;height:24px;padding:0;font-size:14px;border:1px solid #ccc;background:#fff;border-radius:4px;cursor:pointer;">＋</button>'
+             +   '<button type="button" class="tk-qty-del"   data-idx="' + idx + '" style="width:26px;height:24px;padding:0;font-size:12px;border:1px solid #ef9a9a;background:#ffebee;color:#c62828;border-radius:4px;cursor:pointer;margin-left:3px;">🗑</button>'
+             + '</div>';
+      }).join('');
+
+      // ボタン結線
+      listEl.querySelectorAll('.tk-qty-minus').forEach(function(btn) {
+        btn.onclick = function() {
+          const i = parseInt(btn.getAttribute('data-idx'), 10);
+          if (editEntries[i].qty > 1) editEntries[i].qty--;
+          else editEntries.splice(i, 1);
+          rerenderEntries();
+        };
+      });
+      listEl.querySelectorAll('.tk-qty-plus').forEach(function(btn) {
+        btn.onclick = function() {
+          const i = parseInt(btn.getAttribute('data-idx'), 10);
+          editEntries[i].qty = Math.min(99, editEntries[i].qty + 1);
+          rerenderEntries();
+        };
+      });
+      listEl.querySelectorAll('.tk-qty-del').forEach(function(btn) {
+        btn.onclick = function() {
+          const i = parseInt(btn.getAttribute('data-idx'), 10);
+          if (confirm('この商品を削除しますか？')) {
+            editEntries.splice(i, 1);
+            rerenderEntries();
+          }
+        };
+      });
+    }
+    // 合計
+    const total = editEntries.reduce(function(s, e) { return s + (e.price | 0) * (e.qty | 0); }, 0);
+    const count = editEntries.reduce(function(s, e) { return s + (e.qty | 0); }, 0);
+    totalsEl.textContent = '合計 ' + count + '点 ／ ' + total.toLocaleString() + '円';
+  }
+  rerenderEntries();
+
+  // 「＋ 商品を追加」ボタン
+  overlay.querySelector('#addTkItemBtn').onclick = function() {
+    openTakeoutItemPicker(r.store || currentStore, function(picked) {
+      if (!picked) return;
+      // 既存に同一商品があれば数量加算、無ければ追加
+      const existingE = editEntries.find(function(e) {
+        return !e.isCustom && e.pid === picked.pid && (e.option || '') === (picked.option || '');
+      });
+      if (existingE) {
+        existingE.qty = Math.min(99, existingE.qty + 1);
+      } else {
+        editEntries.push({
+          id: 'e' + Date.now() + Math.random(),
+          pid: picked.pid, name: picked.name, option: picked.option || '',
+          memo: picked.memo || '', price: picked.price | 0, qty: 1, isCustom: !!picked.isCustom
+        });
+      }
+      rerenderEntries();
+    });
+  };
+
+  overlay.querySelector('#cancelTkEditBtn').addEventListener('click', function() { overlay.remove(); });
+  overlay.querySelector('#saveTkEditBtn').addEventListener('click', function() {
+    r.date  = overlay.querySelector('#editTkDate').value;
+    r.time  = overlay.querySelector('#editTkTime').value;
+    r.name  = overlay.querySelector('#editTkName').value.trim() || r.name;
+    r.phone = overlay.querySelector('#editTkPhone').value.trim();
+    r.notes = overlay.querySelector('#editTkNotes').value;
+    // 商品内訳の確定・サマリ再計算
+    r.entries = editEntries.filter(function(e) { return e.qty > 0; });
+    r.total   = r.entries.reduce(function(s, e) { return s + (e.price | 0) * (e.qty | 0); }, 0);
+    r.count   = r.entries.reduce(function(s, e) { return s + (e.qty | 0); }, 0);
+    r.summary = r.entries.slice(0, 2).map(function(e) { return e.name + '×' + e.qty; }).join(', ')
+              + (r.entries.length > 2 ? ' 他' : '');
+
     saveReservations();
     overlay.remove();
     renderReservationList();
@@ -7459,6 +7592,99 @@ function openTakeoutEditModal(resId) {
       });
     }
   });
+}
+
+// ★ Claude (2026-06-22): お土産編集モーダルから商品を追加するためのピッカー。
+//   TAKEOUT_PRODUCTS をカテゴリ別タブで選び、必要なら任意金額・メモも入力できる。
+//   onSelect(entry) を呼んで親モーダルに通知。entry = {pid, name, option, memo, price, isCustom}
+function openTakeoutItemPicker(store, onSelect) {
+  if (typeof TAKEOUT_PRODUCTS === 'undefined') {
+    alert('商品マスタが読み込めませんでした');
+    return;
+  }
+  // 現店舗向けの絞り込み（鳥はし=鳥料理/お弁当系、リボルバード=リボ系）
+  const isRevo = store === 'revolverd';
+  const products = TAKEOUT_PRODUCTS.filter(function(p) {
+    if (isRevo) return p.cat === 'リボルバード';
+    return p.cat !== 'リボルバード';
+  });
+  // カテゴリ一覧
+  const cats = [];
+  products.forEach(function(p) {
+    if (cats.indexOf(p.cat) < 0) cats.push(p.cat);
+  });
+  let currentCat = cats[0] || '';
+
+  const existing = document.getElementById('tkItemPickerOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'tkItemPickerOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.cssText = 'max-width:440px;max-height:80vh;overflow-y:auto;';
+  box.innerHTML = '<h3 style="margin-top:0;">商品を追加</h3>'
+                + '<div id="tkPickerTabs" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px;"></div>'
+                + '<div id="tkPickerList" style="display:flex;flex-direction:column;gap:6px;"></div>'
+                + '<button type="button" class="secondary" id="tkPickerCloseBtn" style="margin-top:12px;width:100%;">閉じる</button>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  function renderTabs() {
+    const el = box.querySelector('#tkPickerTabs');
+    el.innerHTML = cats.map(function(c) {
+      const active = (c === currentCat);
+      return '<button type="button" class="tk-cat-btn" data-cat="' + escapeAttr(c) + '" style="padding:5px 10px;font-size:11px;border-radius:6px;cursor:pointer;'
+           + (active ? 'background:var(--primary);color:#fff;border:1px solid var(--primary);' : 'background:#fff;color:var(--text);border:1px solid var(--border);')
+           + '">' + escapeAttr(c) + '</button>';
+    }).join('');
+    el.querySelectorAll('.tk-cat-btn').forEach(function(btn) {
+      btn.onclick = function() {
+        currentCat = btn.getAttribute('data-cat');
+        renderTabs();
+        renderList();
+      };
+    });
+  }
+  function renderList() {
+    const el = box.querySelector('#tkPickerList');
+    const items = products.filter(function(p) { return p.cat === currentCat; });
+    el.innerHTML = items.map(function(p) {
+      const isCustom = !!p.customPrice;
+      const priceStr = isCustom ? '任意金額' : p.price.toLocaleString() + '円';
+      return '<button type="button" class="tk-pick-btn" data-pid="' + escapeAttr(p.id) + '" '
+           + 'style="text-align:left;padding:10px 12px;background:#fff;color:var(--text);border:1px solid var(--border);border-radius:8px;cursor:pointer;font-family:inherit;">'
+           +   '<div style="font-weight:600;">' + escapeAttr(p.name) + '</div>'
+           +   '<div style="font-size:11px;color:var(--muted);">' + priceStr + (isCustom ? '（タップして金額入力）' : '') + '</div>'
+           + '</button>';
+    }).join('');
+    el.querySelectorAll('.tk-pick-btn').forEach(function(btn) {
+      btn.onclick = function() {
+        const pid = btn.getAttribute('data-pid');
+        const p = products.find(function(x) { return x.id === pid; });
+        if (!p) return;
+        if (p.customPrice) {
+          const raw = prompt('金額を入力してください（円）：', '0');
+          if (raw == null) return;
+          const price = parseInt(String(raw).replace(/[^\d]/g, ''), 10) || 0;
+          let memo = '';
+          if (p.customMemo) {
+            const m = prompt('メモ（例：辛口、おまかせ など）任意：', '');
+            memo = (m || '').trim();
+          }
+          onSelect({ pid: p.id, name: p.name, option: '', memo: memo, price: price, isCustom: true });
+        } else {
+          onSelect({ pid: p.id, name: p.name, option: '', memo: '', price: p.price, isCustom: false });
+        }
+        overlay.remove();
+      };
+    });
+  }
+  renderTabs();
+  renderList();
+  box.querySelector('#tkPickerCloseBtn').onclick = function() { overlay.remove(); };
 }
 
 // ============================================================
