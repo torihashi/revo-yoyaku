@@ -8402,6 +8402,9 @@ function onListDateChange() {
   smState.date = listDate.value;
   try { state.date = listDate.value; } catch (e) {}
   renderReservationList();
+  // ★ Claude (2026-06-22): 一覧タブで日付を変えた時、本日のシフトも追従させる。
+  //   renderStaffRail は smState.date を参照するので、上の smState.date 更新の後に呼ぶ必要がある。
+  try { renderStaffRail(); } catch (e) {}
   scrollAfterCalendarDateTap('listDate');
 }
 
