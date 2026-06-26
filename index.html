@@ -5684,13 +5684,13 @@ function checkAvailability() {
   }
 
   // 3. 各時刻スロットの空き状況を表示
-  const isGroup = people >= 5;
+  // ★ Claude (2026-06-22): 仮押さえ判定を撤廃したため「団体／少人数」の案内表示も削除。
+  //   isGroup 変数は他で参照していないので合わせて削除。
   const usagePercent = Math.round(newTotal / cap.normalCap * 100);
 
   result.innerHTML =
     '<div class="result ok">'
     + '<strong>✓ ' + date + ' は' + getStoreLabel() + 'の営業日です</strong>'
-    + (isGroup ? '【団体扱い】受付時に席を即ロックします' : '【少人数】先着順で人数仮押さえします') + '<br>'
     + '当日予約合計 ' + dayTotal + '名 → 受付後 ' + newTotal + '名（使用率 ' + usagePercent + '%）'
     + '</div>'
     + '<div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text);">'
@@ -5774,8 +5774,9 @@ function showSlotDetails(date, time, people) {
     + '<ul>' + candidatesHtml + '</ul></div>';
 
   if (slot.cls === 'warn') {
+    // ★ Claude (2026-06-22): 「仮押さえ」言葉を撤廃
     html += '<div class="result warn"><strong>⚠️ 混雑時間帯</strong>'
-      + '他の少人数仮押さえと合わせて席割振りを検討してください。</div>';
+      + '他の予約と合わせて席割振りを検討してください。</div>';
   }
 
   html += '<button class="primary" id="proceedDetailBtn" style="margin-top:12px" onclick="proceedToStep2()">' + time + ' で詳細入力へ →</button>';
@@ -6536,7 +6537,8 @@ function confirmReservation() {
       name: name, phone: phone, kidInfant: kidInfant, kidElementary: kidElementary,
       course: state.selectedCourse, seat: seat, notes: notes,
       handwriting: getHandwritingDataURL('memoCanvas'),
-      status: state.people >= 5 ? 'confirmed' : 'tentative',
+      // ★ Claude (2026-06-22): 仮押さえ判定を撤廃。新規予約は人数に関係なく常に「確定」扱い。
+      status: 'confirmed',
       source: 'pwa',
       store: currentStore,
       createdAt: Date.now()
@@ -6556,7 +6558,8 @@ function confirmReservation() {
       '<div class="summary-row"><span class="label">コース</span><span class="value">' + escHtml(course.id + ': ' + course.name) + '</span></div>' +
       '<div class="summary-row"><span class="label">席</span><span class="value">' + escHtml(data.seat) + '</span></div>' +
       '<div class="summary-row"><span class="label">特記</span><span class="value">' + escHtml(data.notes || 'なし') + '</span></div>' +
-      '<div class="summary-row"><span class="label">ステータス</span><span class="value">' + (data.status === 'confirmed' ? '確定（団体・席ロック）' : '仮押さえ（席は当日確定）') + '</span></div>';
+      // ★ Claude (2026-06-22): 仮押さえ撤廃に伴いラベルも統一
+      '<div class="summary-row"><span class="label">ステータス</span><span class="value">確定</span></div>';
 
     document.getElementById('step1').classList.add('hidden');
     document.getElementById('step2').classList.add('hidden');
@@ -6624,7 +6627,8 @@ function submitReservation() {
     const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
     const description = [
       '予約ID: ' + data.id,
-      'ステータス: ' + (data.status === 'confirmed' ? '確定' : '仮押さえ'),
+      // ★ Claude (2026-06-22): 仮押さえ撤廃。データ自体は cancelled / confirmed の2状態のみとなる
+      'ステータス: ' + (data.status === 'cancelled' ? '取消' : '確定'),
       '人数: ' + data.people + '名（中学生以上 ' + (data.people - data.kidInfant - data.kidElementary)
         + ' / 小学生 ' + data.kidElementary + ' / 幼児 ' + data.kidInfant + '）',
       '名前: ' + data.name,
@@ -7290,7 +7294,8 @@ function openEditModal(resId) {
       const newTitle = buildEventTitle(r);
       const newDesc  = [
         '予約ID: ' + r.id,
-        'ステータス: ' + (r.status === 'confirmed' ? '確定' : '仮押さえ'),
+        // ★ Claude (2026-06-22): 仮押さえ撤廃。cancelled / confirmed のみ
+        'ステータス: ' + (r.status === 'cancelled' ? '取消' : '確定'),
         '人数: ' + r.people + '名',
         '名前: ' + r.name,
         'コース: ' + (course ? course.name : '席だけ'),
@@ -7389,7 +7394,8 @@ function transferReservationToStore(resId, targetStore, mode) {
     const course    = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === newRes.course; });
     const newDesc   = [
       '予約ID: ' + newRes.id,
-      'ステータス: ' + (newRes.status === 'confirmed' ? '確定' : '仮押さえ'),
+      // ★ Claude (2026-06-22): 仮押さえ撤廃。cancelled / confirmed のみ
+      'ステータス: ' + (newRes.status === 'cancelled' ? '取消' : '確定'),
       '人数: ' + newRes.people + '名',
       '名前: ' + newRes.name,
       'コース: ' + (course ? course.name : '席だけ'),
@@ -8430,7 +8436,8 @@ function renderReservationList() {
 
       // ====== お土産予約（有効）：折りたたみ表示 ======
       if (r.type === 'takeout') {
-        const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+        // ★ Claude (2026-06-22): 仮押さえ撤廃により「仮」バッジは常に非表示。コードは互換のため残置。
+        const statusTag = '';
         // ★ Claude (2026-06-21): 特記事項があれば小アイコンで可視化
         const notesIcon = (r.notes && String(r.notes).trim())
           ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
@@ -8473,7 +8480,8 @@ function renderReservationList() {
       const seatMini = pending
         ? '<span class="ri-seat-mini" style="background:#fff3cd;color:#856404;">⚠席未</span>'
         : '<span class="ri-seat-mini">' + compactSeat(r.seat) + '</span>';
-      const statusTag = r.status === 'tentative' ? '<span class="ri-status-mini tentative">仮</span>' : '';
+      // ★ Claude (2026-06-22): 仮押さえ撤廃により「仮」バッジは常に非表示。互換性のため変数は残置。
+      const statusTag = '';
 
       // コースの種別判定（1行ミニバッジ用）
       let miniCourseHtml = '';
