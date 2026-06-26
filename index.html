@@ -2555,6 +2555,16 @@ function updateUserChip() {
   }
 }
 
+// 一般スタッフは、アプリを開くたびに所属店舗を初期表示にする。
+// 管理者は両店舗を扱うため、選択中の店舗を維持する。
+function applyStaffDefaultStore() {
+  if (!currentUser || currentUser.isAdmin) return;
+  const store = currentUser.defaultStore === 'revolverd' ? 'revolverd' : 'torihashi';
+  if (store !== currentStore) {
+    try { setCurrentStore(store); } catch (e) {}
+  }
+}
+
 function onUserChipTap() {
   if (!currentUser) return;
   const msg = 'ログイン中：' + currentUser.name + '\n'
@@ -2653,10 +2663,7 @@ function doLogin() {
       // 既に起動済の場合は再描画だけ
       if (typeof renderReservationList === 'function') { try { renderReservationList(); } catch(e) {} }
       if (typeof renderSeatMap === 'function')         { try { renderSeatMap(); } catch(e) {} }
-      // 管理者なら自店舗ではなく現状維持、一般スタッフは所属店舗に切替
-      if (currentUser && !currentUser.isAdmin && currentUser.defaultStore && currentUser.defaultStore !== currentStore) {
-        try { setCurrentStore(currentUser.defaultStore); } catch(e) {}
-      }
+      applyStaffDefaultStore();
     }
   });
 }
@@ -2679,6 +2686,7 @@ function checkAuthOnBoot() {
     currentUser = saved;
     hideAuthGate();
     updateUserChip();
+    applyStaffDefaultStore();
     // 30分以上経っていれば裏で再検証
     if (Date.now() - (saved.loggedInAt || 0) > 30 * 60 * 1000) {
       setTimeout(revalidateAuthSilently, 5000);
