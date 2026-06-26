@@ -4586,6 +4586,30 @@ function parsePhoneFromDescription(desc) {
   return '';
 }
 
+function parseNameFromTitle(title) {
+  const text = String(title || '').replace('[キャンセル]', '').trim();
+  const parts = text.split(/[、,]/).map(function(s) { return s.trim(); });
+  for (let i = 0; i < parts.length; i++) {
+    const m = parts[i].match(/^(.+?)様$/);
+    if (m && m[1] && !/^\d+\s*名$/.test(m[1])) return m[1].trim();
+  }
+  const fallback = text.match(/(?:^|[、,]\s*)([^、,\n\r]+?)様/);
+  return fallback ? fallback[1].trim() : '';
+}
+
+function parseNameFromDescription(desc) {
+  if (!desc) return '';
+  const lines = String(desc).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (/^(?:名前|お名前)[:：]/.test(line)) {
+      const v = line.replace(/^(?:名前|お名前)[:：]\s*/, '').replace(/様$/, '').trim();
+      if (v && v !== '不明') return v;
+    }
+  }
+  return '';
+}
+
 // お土産予約の説明文から商品内訳・合計・点数等を復元
 function parseTakeoutDescription(desc) {
   const out = { entries: [], total: 0, count: 0, phone: '', notes: '', summary: '' };
@@ -4679,9 +4703,9 @@ function mergeFromCalendar(items) {
         existing.seat = seatFromTitle; changed = true;
       }
       // 名前の同期（タイトル中の「〇〇様」を抽出）
-      const nameMatchUpd = cleanTitle.match(/([ァ-ヶー一-龯ぁ-んa-zA-Z]+)様/);
-      if (nameMatchUpd && existing.name !== nameMatchUpd[1] && existing.type !== 'takeout') {
-        existing.name = nameMatchUpd[1]; changed = true;
+      const parsedNameUpd = parseNameFromTitle(cleanTitle) || parseNameFromDescription(ev.description || '');
+      if (parsedNameUpd && existing.name !== parsedNameUpd && existing.type !== 'takeout') {
+        existing.name = parsedNameUpd; changed = true;
       }
       // コースの推定同期（タイトルからキーワードを判定）
       if (existing.type !== 'takeout') {
@@ -4751,8 +4775,8 @@ function mergeFromCalendar(items) {
       else if (cleanTitle.indexOf('◾️') === 0) source = 'autoreserve';
       else if (cleanTitle.indexOf('🥡') === 0) source = 'pwa';
       // 名前抜き出し（〇〇様）
-      const nameMatch = cleanTitle.match(/([ァ-ヶー一-龯ぁ-んa-zA-Z]+)様/);
-      const name = nameMatch ? nameMatch[1] : '不明';
+      const parsedName = parseNameFromTitle(cleanTitle) || parseNameFromDescription(ev.description || '');
+      const name = parsedName || '不明';
       const isTakeout = cleanTitle.indexOf('🥡') === 0;
       const inferredCourse = isTakeout ? 'S' : (inferCourseFromCalendar(cleanTitle, ev.description || '', ev.store || 'torihashi') || 'S');
       // ★ Claude (2026-06-21): 新規取込時は description から特記事項を復元してセット。
@@ -6603,6 +6627,7 @@ function submitReservation() {
       'ステータス: ' + (data.status === 'confirmed' ? '確定' : '仮押さえ'),
       '人数: ' + data.people + '名（中学生以上 ' + (data.people - data.kidInfant - data.kidElementary)
         + ' / 小学生 ' + data.kidElementary + ' / 幼児 ' + data.kidInfant + '）',
+      '名前: ' + data.name,
       'コース: ' + (course ? course.name : '席だけ'),
       '席: ' + data.seat,
       '電話: ' + data.phone,
@@ -7267,6 +7292,7 @@ function openEditModal(resId) {
         '予約ID: ' + r.id,
         'ステータス: ' + (r.status === 'confirmed' ? '確定' : '仮押さえ'),
         '人数: ' + r.people + '名',
+        '名前: ' + r.name,
         'コース: ' + (course ? course.name : '席だけ'),
         '席: ' + (r.seat || '未設定'),
         '電話: ' + r.phone,
@@ -7365,6 +7391,7 @@ function transferReservationToStore(resId, targetStore, mode) {
       '予約ID: ' + newRes.id,
       'ステータス: ' + (newRes.status === 'confirmed' ? '確定' : '仮押さえ'),
       '人数: ' + newRes.people + '名',
+      '名前: ' + newRes.name,
       'コース: ' + (course ? course.name : '席だけ'),
       '席: ' + (newRes.seat || '未設定'),
       '電話: ' + newRes.phone,
