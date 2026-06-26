@@ -8045,9 +8045,11 @@ function removeEntryById(eid) {
   takeoutState.entries = takeoutState.entries.filter(function(e) { return e.id !== eid; });
 }
 
-function startTakeoutFlow() {
-  const date = document.getElementById('resDate').value;
+function startTakeoutFlow(dateOverride) {
+  const date = dateOverride || document.getElementById('resDate').value;
   if (!date) { alert('日付を選択してください'); return; }
+  const resDate = document.getElementById('resDate');
+  if (resDate) resDate.value = date;
   takeoutState.date = date;
   takeoutState.time = '';
   takeoutState.entries = [];
@@ -8081,8 +8083,19 @@ function startTakeoutFlow() {
 
   // 画面切替
   document.getElementById('step1').classList.add('hidden');
+  document.getElementById('step2').classList.add('hidden');
+  document.getElementById('step3').classList.add('hidden');
   document.getElementById('stepT1').classList.remove('hidden');
+  document.getElementById('stepT2').classList.add('hidden');
+  document.getElementById('stepT3').classList.add('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function quickNewTakeoutForDate(targetDate) {
+  const date = targetDate || todayStr();
+  switchTab('new');
+  try { state.date = date; state.preselectedSeat = null; } catch (e) {}
+  startTakeoutFlow(date);
 }
 
 function cancelTakeoutFlow() {
@@ -8537,11 +8550,7 @@ function quickNewReservationFromList() {
 function quickNewTakeoutFromList() {
   const listDate = document.getElementById('listDate');
   const targetDate = (listDate && listDate.value) || todayStr();
-  switchTab('new');
-  const resDate = document.getElementById('resDate');
-  if (resDate) resDate.value = targetDate;
-  try { state.date = targetDate; } catch (e) {}
-  if (typeof startTakeoutFlow === 'function') startTakeoutFlow();
+  quickNewTakeoutForDate(targetDate);
 }
 
 function renderReservationList() {
@@ -8882,11 +8891,7 @@ function renderTakeoutRail(date) {
       slot.innerHTML = '<div class="meta">＋ 新規<br><span style="font-size:9px">（お土産）</span></div>';
       slot.onclick = function() {
         // 座席表で表示中の日付でお土産予約を開始（確認なし即実行）
-        const targetDate = date || todayStr();
-        switchTab('new');
-        const dateInp = document.getElementById('resDate');
-        if (dateInp) dateInp.value = targetDate;
-        if (typeof startTakeoutFlow === 'function') startTakeoutFlow();
+        quickNewTakeoutForDate(date || todayStr());
       };
     }
     rail.appendChild(slot);
