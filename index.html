@@ -268,6 +268,11 @@ button.secondary:active { background: var(--primary); color: white; }
   font-size: 13px; font-weight: 600;
   background: var(--primary-light); color: var(--primary-dark);
   padding: 1px 7px; border-radius: 10px; flex-shrink: 0;
+  /* ★ Claude (2026-06-22): 履歴「12→10→13→11名」が長くなっても折り返さず収まるように */
+  white-space: nowrap;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ri-summary .ri-name {
   font-size: 14px; font-weight: 600; color: var(--text);
@@ -4568,6 +4573,58 @@ function parseNotesFromDescription(desc) {
   return out.join(' / ');
 }
 
+// ★ Claude (2026-06-22): 人数変更履歴のヘルパー群。
+//   旧アプリ準拠で「12→10→13→11名」のように変更履歴を表示する。
+//   r.peopleHistory: number[] を時系列で蓄積（最新値が末尾）。連続重複は記録しない。
+function addPeopleHistory(r, newPeople) {
+  if (!r) return;
+  const v = parseInt(newPeople, 10);
+  if (isNaN(v) || v < 1) return;
+  if (!Array.isArray(r.peopleHistory)) {
+    // 初回呼び出し：既存の people 値を起点に
+    r.peopleHistory = (r.people && r.people > 0) ? [parseInt(r.people, 10)] : [];
+  }
+  const last = r.peopleHistory[r.peopleHistory.length - 1];
+  if (last === v) return; // 同じ値は記録しない
+  r.peopleHistory.push(v);
+  // 長すぎる履歴は古いものから切り捨て（最新20件まで保持）
+  if (r.peopleHistory.length > 20) {
+    r.peopleHistory = r.peopleHistory.slice(-20);
+  }
+}
+function formatPeopleHistory(r) {
+  const cur = r.people || 0;
+  const hist = Array.isArray(r.peopleHistory) ? r.peopleHistory : [];
+  // 現在値が末尾と違うなら末尾を補正（編集時に同期漏れがあっても表示はずれない）
+  let series = hist.slice();
+  if (series.length === 0) series = [cur];
+  if (series[series.length - 1] !== cur && cur > 0) series.push(cur);
+  // 連続重複を整理（防衛的）
+  const compact = [];
+  series.forEach(function(n) {
+    if (compact.length === 0 || compact[compact.length - 1] !== n) compact.push(n);
+  });
+  return compact.join('→') + '名';
+}
+// description から「人数履歴: 12→10→13」を取り出す。無ければ null
+function parsePeopleHistoryFromDescription(desc) {
+  if (!desc) return null;
+  const lines = String(desc).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (line.indexOf('人数履歴:') === 0 || line.indexOf('人数履歴：') === 0) {
+      const v = line.replace(/^人数履歴[:：]\s*/, '').trim();
+      // 「12→10→13」or「12->10->13」or「12 → 10」を受け付ける
+      const nums = v.split(/[→\-]>?|>/).map(function(x) {
+        const n = parseInt(String(x).trim(), 10);
+        return isNaN(n) ? null : n;
+      }).filter(function(n) { return n != null && n > 0; });
+      return nums.length > 0 ? nums : null;
+    }
+  }
+  return null;
+}
+
 // ★ Claude (2026-06-22): 通常予約のカレンダー説明文から電話番号を復元するヘルパー。
 //   - PWA直接作成 / Yahoo!/AutoReserve取込 とも `電話: …` 行を description に書いている
 //   - "なし" や空文字は無視
@@ -4696,7 +4753,22 @@ function mergeFromCalendar(items) {
         existing.status = 'confirmed'; changed = true; restored++;
       }
       if (peopleFromTitle && existing.people !== peopleFromTitle && existing.type !== 'takeout') {
+        // ★ Claude (2026-06-22): GCal側で人数が変わった時も履歴に追加
+        try { addPeopleHistory(existing, peopleFromTitle); } catch (e) {}
         existing.people = peopleFromTitle; changed = true;
+      }
+      // ★ Claude (2026-06-22): description に「人数履歴:」行があれば、その series を権威ある履歴として復元
+      //   端末A の編集 → GCal description に記録 → 端末B 同期で履歴ごと共有される。
+      if (existing.type !== 'takeout') {
+        const incomingHistory = parsePeopleHistoryFromDescription(ev.description || '');
+        if (incomingHistory && incomingHistory.length > 0) {
+          const cur = JSON.stringify(existing.peopleHistory || []);
+          const inc = JSON.stringify(incomingHistory);
+          if (cur !== inc) {
+            existing.peopleHistory = incomingHistory;
+            changed = true;
+          }
+        }
       }
       // 席名の同期（カレンダー側で席を変えたらPWAにも反映）
       if (seatFromTitle && existing.seat !== seatFromTitle && existing.type !== 'takeout') {
@@ -6539,6 +6611,8 @@ function confirmReservation() {
       handwriting: getHandwritingDataURL('memoCanvas'),
       // ★ Claude (2026-06-22): 仮押さえ判定を撤廃。新規予約は人数に関係なく常に「確定」扱い。
       status: 'confirmed',
+      // ★ Claude (2026-06-22): 人数変更履歴。新規時点は人数1件のみ
+      peopleHistory: [state.people],
       source: 'pwa',
       store: currentStore,
       createdAt: Date.now()
@@ -6625,12 +6699,17 @@ function submitReservation() {
     const startStr = data.date + 'T' + data.time + ':00+09:00';
     const startDate = new Date(startStr);
     const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
+    // ★ Claude (2026-06-22): 人数履歴行を description に含めて端末間共有
+    const peopleHistoryLine = (Array.isArray(data.peopleHistory) && data.peopleHistory.length > 1)
+      ? '人数履歴: ' + data.peopleHistory.join('→')
+      : null;
     const description = [
       '予約ID: ' + data.id,
       // ★ Claude (2026-06-22): 仮押さえ撤廃。データ自体は cancelled / confirmed の2状態のみとなる
       'ステータス: ' + (data.status === 'cancelled' ? '取消' : '確定'),
       '人数: ' + data.people + '名（中学生以上 ' + (data.people - data.kidInfant - data.kidElementary)
         + ' / 小学生 ' + data.kidElementary + ' / 幼児 ' + data.kidInfant + '）',
+      ...(peopleHistoryLine ? [peopleHistoryLine] : []),
       '名前: ' + data.name,
       'コース: ' + (course ? course.name : '席だけ'),
       '席: ' + data.seat,
@@ -7272,6 +7351,8 @@ function openEditModal(resId) {
 
     r.date   = newDate;
     r.time   = newTime;
+    // ★ Claude (2026-06-22): 人数が変わったら履歴に追加（同値なら no-op）
+    if (newPeople !== r.people) addPeopleHistory(r, newPeople);
     r.people = newPeople;
     r.course = newCourse;
     r.name   = newName;
@@ -7292,11 +7373,16 @@ function openEditModal(resId) {
       // 両店舗のコースをマージして検索
       const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
       const newTitle = buildEventTitle(r);
+      // ★ Claude (2026-06-22): 人数履歴行を description に含めて端末間共有
+      const peopleHistoryLineEdit = (Array.isArray(r.peopleHistory) && r.peopleHistory.length > 1)
+        ? '人数履歴: ' + r.peopleHistory.join('→')
+        : null;
       const newDesc  = [
         '予約ID: ' + r.id,
         // ★ Claude (2026-06-22): 仮押さえ撤廃。cancelled / confirmed のみ
         'ステータス: ' + (r.status === 'cancelled' ? '取消' : '確定'),
         '人数: ' + r.people + '名',
+        ...(peopleHistoryLineEdit ? [peopleHistoryLineEdit] : []),
         '名前: ' + r.name,
         'コース: ' + (course ? course.name : '席だけ'),
         '席: ' + (r.seat || '未設定'),
@@ -7392,11 +7478,16 @@ function transferReservationToStore(resId, targetStore, mode) {
     const endDate   = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
     const newTitle  = buildEventTitle(newRes);
     const course    = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === newRes.course; });
+    // ★ Claude (2026-06-22): 人数履歴行を description に含めて端末間共有
+    const peopleHistoryLineMove = (Array.isArray(newRes.peopleHistory) && newRes.peopleHistory.length > 1)
+      ? '人数履歴: ' + newRes.peopleHistory.join('→')
+      : null;
     const newDesc   = [
       '予約ID: ' + newRes.id,
       // ★ Claude (2026-06-22): 仮押さえ撤廃。cancelled / confirmed のみ
       'ステータス: ' + (newRes.status === 'cancelled' ? '取消' : '確定'),
       '人数: ' + newRes.people + '名',
+      ...(peopleHistoryLineMove ? [peopleHistoryLineMove] : []),
       '名前: ' + newRes.name,
       'コース: ' + (course ? course.name : '席だけ'),
       '席: ' + (newRes.seat || '未設定'),
@@ -8514,11 +8605,13 @@ function renderReservationList() {
       const notesIcon = (r.notes && String(r.notes).trim())
         ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
         : '';
+      // ★ Claude (2026-06-22): 履歴があれば「12→10→13→11名」、無ければ「12名」
+      const peopleLabel = formatPeopleHistory(r);
       return ''
         + '<div class="reservation-item active" data-rid="' + r.id + '">'
         +   '<div class="ri-summary" onclick="toggleResExpand(this)">'
         +     '<span class="ri-time">' + r.time + '</span>'
-        +     '<span class="ri-people">' + r.people + '名</span>'
+        +     '<span class="ri-people">' + peopleLabel + '</span>'
         +     '<span class="ri-name">' + nameWithMark + '</span>'
         +     miniCourseHtml
         +     seatMini
@@ -9122,7 +9215,8 @@ function renderCalendarGrid(container, animDirection) {
         else if (r.source === 'yahoo')     chipCls += ' src-yahoo';
         else if (r.source === 'autoreserve') chipCls += ' src-autoreserve';
         const nm = r.name || '';
-        const peopleText = r.people ? (r.people + '名') : '';
+        // ★ Claude (2026-06-22): 月カレンダーチップも人数履歴で表示
+        const peopleText = r.people ? formatPeopleHistory(r) : '';
         let txt = '';
         if (r.type === 'takeout') {
           txt = '🥡 ' + nm;
