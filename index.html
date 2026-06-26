@@ -1887,13 +1887,8 @@ select.time-select option:disabled { color: #aaa; }
       <button class="secondary" onclick="quickNewTakeoutFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">🥡 新規お土産</button>
     </div>
     <div id="reservationList"></div>
-    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:13px;">
-      <div class="summary-row"><span class="label">予約合計人数</span><span class="value" id="dayTotalPeople">0名</span></div>
-      <div class="summary-row"><span class="label">店内基本定員</span><span class="value">59名</span></div>
-      <div class="summary-row"><span class="label">使用率</span><span class="value" id="dayUsage">0%</span></div>
-      <div class="summary-row"><span class="label">席割振り発動 (60%)</span><span class="value" id="thresholdStatus">未到達</span></div>
-    </div>
-    <!-- ★ Claude (2026-06-22): 座席表と同じ「本日のシフト」欄。renderStaffRail が両レールに同じHTMLを書き込む。 -->
+    <!-- ★ Claude (2026-06-22): 座席表と同じ「本日のシフト」欄。renderStaffRail が両レールに同じHTMLを書き込む。
+         (2026-06-22 修正) 集計サマリの「上」に配置するため、サマリ行のすぐ上へ移動。 -->
     <div class="staff-rail" id="listStaffRail" style="margin-top:14px;">
       <div class="staff-rail-header">
         <span>👥 本日のシフト <span id="listStaffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
@@ -1902,6 +1897,12 @@ select.time-select option:disabled { color: #aaa; }
       <div id="listStaffRailContent" class="staff-rail-content">
         <div class="staff-empty">読み込み中...</div>
       </div>
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border); font-size:13px;">
+      <div class="summary-row"><span class="label">予約合計人数</span><span class="value" id="dayTotalPeople">0名</span></div>
+      <div class="summary-row"><span class="label">店内基本定員</span><span class="value">59名</span></div>
+      <div class="summary-row"><span class="label">使用率</span><span class="value" id="dayUsage">0%</span></div>
+      <div class="summary-row"><span class="label">席割振り発動 (60%)</span><span class="value" id="thresholdStatus">未到達</span></div>
     </div>
   </div>
 </section>
