@@ -136,6 +136,14 @@ main { padding: 16px; max-width: 540px; margin: 0 auto; }
 .row { display: flex; gap: 10px; }
 .row > .field { flex: 1; }
 
+/* ★ Claude (2026-06-22): iOS Safari の「ダブルタップでズーム」を全インタラクティブ要素で抑止。
+   ピンチ操作（複数指）でのズームは維持される（user-scalable=yes / maximum-scale=5.0）。
+   個別 selector (.stepper button 等) には既に touch-action: manipulation が付いていたが、
+   お土産入力の `.product-item .pqty button` 等 一部抜けていたものをここで一括カバーする。 */
+button, input, select, textarea, label, a, [role="button"] {
+  touch-action: manipulation;
+}
+
 .stepper {
   display: flex; align-items: center; justify-content: space-between;
   border: 1.5px solid var(--border);
@@ -463,6 +471,8 @@ button.secondary:active { background: var(--primary); color: white; }
   width: 36px; height: 36px; border: none;
   background: var(--primary-light); color: var(--primary-dark);
   font-size: 18px; font-weight: 700; cursor: pointer;
+  /* ★ Claude (2026-06-22): 連打時の意図しないダブルタップズーム抑止（グローバル指定の二重保険） */
+  touch-action: manipulation;
 }
 .product-item .pqty input {
   width: 40px; text-align: center; border: none;
