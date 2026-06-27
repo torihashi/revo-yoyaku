@@ -1691,28 +1691,37 @@ select.time-select option:disabled { color: #aaa; }
 </div>
 
 <!-- Step 1: 空き判定 -->
+<!-- ★ Claude (2026-06-22): スクロール最小化のため再構成。
+     - 日付入力欄＋月カレンダーは折り畳み（既存日付を変更したいときだけ展開）。
+       通常は一覧/座席表から日付を渡されているので非表示でOK。
+     - 「人数」と「🥡お土産はこちら」を横並びにして垂直スペースを節約。
+     - 「空き時間を確認」ボタンは削除し、人数変更で自動再判定。
+       手動で再判定したい場合は人数±ボタンを再タップ。 -->
 <div class="card" id="step1">
-  <h2>① 空き状況を確認</h2>
+  <h2 style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+    <span id="step1Title">① 空き状況を確認</span>
+    <button type="button" id="step1ChangeDate" onclick="toggleStep1DateField()" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:400;color:var(--muted);">📅 日付変更</button>
+  </h2>
 
-  <div class="field">
+  <div class="field" id="step1DateField" style="display:none;">
     <label>日付<span class="req">*</span></label>
     <input type="date" id="resDate" onchange="onResDateChange()" oninput="onResDateChange()" />
     <div class="cal-grid-wrap" data-target="resDate" data-onchange="onResDateChange"></div>
   </div>
 
-  <button class="takeout-btn" type="button" onclick="startTakeoutFlow()">🥡 お土産（持ち帰り）はこちら →</button>
-
-  <div class="field">
-    <label>ご人数<span class="req">*</span></label>
-    <div class="stepper">
-      <button type="button" id="numMinus" aria-label="人数マイナス">−</button>
-      <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" onchange="onResPeopleChange()" oninput="onResPeopleChange()" />
-      <button type="button" id="numPlus" aria-label="人数プラス">＋</button>
+  <div class="people-takeout-row" style="display:flex;gap:10px;align-items:stretch;margin-bottom:12px;">
+    <div class="field" style="flex:1;margin-bottom:0;">
+      <label>ご人数<span class="req">*</span></label>
+      <div class="stepper">
+        <button type="button" id="numMinus" aria-label="人数マイナス">−</button>
+        <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" onchange="onResPeopleChange()" oninput="onResPeopleChange()" />
+        <button type="button" id="numPlus" aria-label="人数プラス">＋</button>
+      </div>
     </div>
-    <div class="hint">合計人数（お子様含む）</div>
+    <div style="flex:1;display:flex;align-items:flex-end;">
+      <button class="takeout-btn" type="button" onclick="startTakeoutFlow()" style="width:100%;margin:0;padding:14px 8px;">🥡 お土産<br>はこちら →</button>
+    </div>
   </div>
-
-  <button class="primary" onclick="checkAvailability()">空き時間を確認</button>
 
   <div id="availabilityResult"></div>
 </div>
@@ -8723,12 +8732,19 @@ function quickNewReservationFromList() {
     document.getElementById('step2').classList.add('hidden');
     document.getElementById('step3').classList.add('hidden');
     state.step = 1;
+    // ★ Claude (2026-06-22): 日付フィールドは閉じておく（既に渡された日付を使う）
+    const f = document.getElementById('step1DateField');
+    if (f) f.style.display = 'none';
   } catch (e) {}
-  // 人数フィールドにフォーカス
+  // ★ Claude (2026-06-22): 自動で空き判定を実行（旧来は「空き時間を確認」ボタンタップ必須だった）
   setTimeout(function() {
-    const ppl = document.getElementById('resPeople');
-    if (ppl) { ppl.focus(); ppl.select(); }
-  }, 200);
+    try { if (typeof checkAvailability === 'function') checkAvailability(); } catch (e) {}
+    // 時刻ボタン一覧へスクロール
+    setTimeout(function() {
+      const grid = document.getElementById('slotGrid');
+      if (grid) try { grid.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+    }, 200);
+  }, 150);
 }
 // 一覧から新規お土産予約へ
 function quickNewTakeoutFromList() {
@@ -9194,6 +9210,9 @@ function renderUnassignedRail(dayRes) {
         switchTab('new');
         const dateInp = document.getElementById('resDate');
         if (dateInp) dateInp.value = date;
+        // ★ Claude (2026-06-22): 既に渡された日付を使うので日付フィールドは閉じておく
+        const f = document.getElementById('step1DateField');
+        if (f) f.style.display = 'none';
         if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
         autoAdvanceFromSeatMap();
       };
@@ -9252,6 +9271,9 @@ function handleSeatClick(seatId) {
   // フォームに反映
   const dateInp = document.getElementById('resDate');
   if (dateInp) dateInp.value = date;
+  // ★ Claude (2026-06-22): 日付は確定済みなので日付フィールドは閉じる
+  const _f = document.getElementById('step1DateField');
+  if (_f) _f.style.display = 'none';
   document.querySelectorAll('#resTimeGrid .time-btn').forEach(function(b) {
     b.classList.toggle('selected', b.getAttribute('data-time') === time);
     if (b.getAttribute('data-time') === time) state.time = time;
@@ -9602,6 +9624,40 @@ function onResPeopleChange() {
       if (inp2) inp2.value = v;
       if (lbl2) lbl2.textContent = v + '名';
     }
+    // ★ Claude (2026-06-22): 「空き時間を確認」ボタンを廃止したので人数確定で自動再判定。
+    //   連打抑止のため 300ms デバウンス。step1 表示中のみ動かす（step2/3 では無視）。
+    if (state.step === 1 || !state.step) {
+      _scheduleAutoCheckAvailability();
+    }
+  }
+}
+
+// ★ Claude (2026-06-22): step1 の自動空き判定（デバウンス付き）
+let _autoCheckTimer = null;
+function _scheduleAutoCheckAvailability() {
+  if (_autoCheckTimer) clearTimeout(_autoCheckTimer);
+  _autoCheckTimer = setTimeout(function() {
+    _autoCheckTimer = null;
+    try {
+      const dateInp = document.getElementById('resDate');
+      if (!dateInp || !dateInp.value) return;
+      if (typeof checkAvailability === 'function') checkAvailability();
+    } catch (e) {}
+  }, 300);
+}
+
+// ★ Claude (2026-06-22): step1 の日付フィールドを開閉。通常は閉じていて、変更したい時だけ展開。
+function toggleStep1DateField() {
+  const f = document.getElementById('step1DateField');
+  if (!f) return;
+  const hidden = (f.style.display === 'none' || f.style.display === '');
+  f.style.display = hidden ? 'block' : 'none';
+  // 開いた時はカレンダーを再描画して現在日にハイライト追従
+  if (hidden) {
+    try {
+      const wrap = f.querySelector('.cal-grid-wrap');
+      if (wrap && typeof renderCalendarGrid === 'function') renderCalendarGrid(wrap);
+    } catch (e) {}
   }
 }
 
