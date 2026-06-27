@@ -5935,15 +5935,10 @@ function checkAvailability() {
     });
   });
 
-  // 「空き時間を確認」を押した直後 → 時刻ボタン一覧へ自動スクロール
-  // ただし店舗切替などによる再描画時はスクロールしない（_suppressAutoAdvance フラグで判定）
-  if (!(state && state._suppressAutoAdvance)) {
-    setTimeout(function() {
-      try {
-        grid.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      } catch (e) {}
-    }, 100);
-  }
+  // ★ Claude (2026-06-22): 自動スクロール削除。
+  //   ・旧「空き時間を確認」ボタン押下後にスクロールする挙動だったが、ボタン廃止に伴い不要。
+  //   ・新規予約画面に入った瞬間に時刻表示へ移ってしまうユーザー体験の悪化も解消。
+  //   ・時刻スロットは人数欄のすぐ下に表示されるので、自然に視界に入る。
 }
 
 // 1スロットの空き状況計算
@@ -8758,13 +8753,9 @@ function quickNewReservationFromList() {
     }
   } catch (e) {}
   // ★ Claude (2026-06-22): 自動で空き判定を実行（旧来は「空き時間を確認」ボタンタップ必須だった）
+  //   時刻スロット領域へのスクロールは行わない（ユーザーは人数入力で留まる）。
   setTimeout(function() {
     try { if (typeof checkAvailability === 'function') checkAvailability(); } catch (e) {}
-    // 時刻ボタン一覧へスクロール
-    setTimeout(function() {
-      const grid = document.getElementById('slotGrid');
-      if (grid) try { grid.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
-    }, 200);
   }, 150);
 }
 // 一覧から新規お土産予約へ
@@ -9659,6 +9650,9 @@ function onResPeopleChange() {
 }
 
 // ★ Claude (2026-06-22): step1 の自動空き判定（デバウンス付き）
+//   人数入力 → 300ms 後に空き判定 → さらにキーボードを閉じてから時刻スロットへスクロール。
+//   ★ 仕様: 画面エントリ直後の自動判定はスクロールしない（quickNewReservationFromList から直接呼ぶ）。
+//            この関数経由（=ユーザーが人数を変えた時）のみスクロールする。
 let _autoCheckTimer = null;
 function _scheduleAutoCheckAvailability() {
   if (_autoCheckTimer) clearTimeout(_autoCheckTimer);
@@ -9668,6 +9662,19 @@ function _scheduleAutoCheckAvailability() {
       const dateInp = document.getElementById('resDate');
       if (!dateInp || !dateInp.value) return;
       if (typeof checkAvailability === 'function') checkAvailability();
+      // ★ Claude (2026-06-22): ユーザー入力起点の判定後は、
+      //   ①数字キーパッドを閉じる（blur） → ②時刻スロット領域へスムーズスクロール
+      setTimeout(function() {
+        try {
+          const pplInp = document.getElementById('resPeople');
+          if (pplInp && document.activeElement === pplInp) pplInp.blur();
+        } catch (e) {}
+        // blur 後の少し遅延でレイアウト確定後にスクロール
+        setTimeout(function() {
+          const grid = document.getElementById('slotGrid');
+          if (grid) try { grid.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+        }, 100);
+      }, 50);
     } catch (e) {}
   }, 300);
 }
