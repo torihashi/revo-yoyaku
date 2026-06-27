@@ -2130,6 +2130,19 @@ select.time-select option:disabled { color: #aaa; }
     </div>
   </div>
 
+  <!-- ★ Claude (2026-06-22): 商品マスタ強制再取得（管理者のみ）
+       スプレッドシートで価格や商品を変更した直後、GAS のキャッシュ（最大1時間）を待たずに反映させたい時用。 -->
+  <div class="card hidden" id="productReloadCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>🥡 お土産メニュー更新 <span style="font-size:11px;font-weight:400;color:var(--muted);">（管理者のみ）</span></span>
+      <button id="reloadProductsBtn" type="button" onclick="reloadProductsManually()" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 今すぐ更新</button>
+    </h2>
+    <div style="font-size:11px;color:var(--muted);line-height:1.6;">
+      タイムカードv4 スプレッドシートの「商品マスタ」から最新の商品・価格を取得します。<br>
+      <span id="productLoadStatus">未取得</span>
+    </div>
+  </div>
+
   <!-- アクティビティログ（席情報タブの末尾・全員閲覧可） -->
   <div class="card" id="activityLogCard">
     <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
@@ -4671,6 +4684,23 @@ function parsePeopleHistoryFromDescription(desc) {
   return null;
 }
 
+// ★ Claude (2026-06-22): GCal description から「予約ID: XXX」行を抽出するヘルパー。
+//   用途: 予約作成直後、callWebhook の resolve 前に sync が走った場合、
+//         ローカル予約は gcalEventId 未設定 → 既存検索が失敗 → 重複作成のバグが起きていた。
+//         description には書込時に必ず「予約ID: ${data.id}」を入れているので、
+//         これをセカンダリキーとして突合することで重複を防ぐ。
+function parseReservationIdFromDescription(desc) {
+  if (!desc) return '';
+  const lines = String(desc).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (line.indexOf('予約ID:') === 0 || line.indexOf('予約ID：') === 0) {
+      return line.replace(/^予約ID[:：]\s*/, '').trim();
+    }
+  }
+  return '';
+}
+
 // ★ Claude (2026-06-22): 通常予約のカレンダー説明文から電話番号を復元するヘルパー。
 //   - PWA直接作成 / Yahoo!/AutoReserve取込 とも `電話: …` 行を description に書いている
 //   - "なし" や空文字は無視
@@ -4762,7 +4792,26 @@ function parseTakeoutDescription(desc) {
 function mergeFromCalendar(items) {
   let updated = 0, added = 0, cancelled = 0, restored = 0;
   items.forEach(function(ev) {
-    const existing = reservations.find(function(r) { return r.gcalEventId === ev.id; });
+    // ★ Claude (2026-06-22): まず gcalEventId で突合。見つからなければ description の「予約ID:」
+    //   行でフォールバック検索する。これにより、予約作成直後（callWebhook が resolve する前）に
+    //   sync が走っても、ローカル予約と GCal イベントが正しく結びつき、重複作成を防げる。
+    let existing = reservations.find(function(r) { return r.gcalEventId === ev.id; });
+    if (!existing) {
+      const descResId = parseReservationIdFromDescription(ev.description || '');
+      if (descResId) {
+        const match = reservations.find(function(r) {
+          // 同じ予約IDで、まだ gcalEventId が紐付いていない（またはこの ev とは別ID）レコードを探す
+          return r.id === descResId && r.gcalEventId !== ev.id;
+        });
+        if (match) {
+          existing = match;
+          // ここで gcalEventId を紐付けて以降の sync で直接マッチさせる
+          if (!match.gcalEventId) {
+            match.gcalEventId = ev.id;
+          }
+        }
+      }
+    }
     const titleCancelled = ev.title.indexOf('[キャンセル]') >= 0;
     const cleanTitle = ev.title.replace('[キャンセル]', '').trim();
     // タイトルから人数を抜き出す（例: ⚪ 5500円飲み放題、5名、ヤマダ様、ご予約4）
@@ -5613,6 +5662,11 @@ window.addEventListener('DOMContentLoaded', () => {
     try { preloadEmployees(); } catch (e) {}
   }
 
+  // ★ Claude (2026-06-22): 商品マスタを GAS から裏で取得
+  //   まず localStorage キャッシュがあれば先に展開（オフラインでもUI動く）→ そのあと最新版を取得
+  try { _loadProductsFromCache(); } catch (e) {}
+  try { loadTakeoutProducts(); } catch (e) {}
+
   // 当日のシフトも裏でプリロード（シフトレールを高速化）
   if (typeof preloadStaffSchedules === 'function') {
     try { preloadStaffSchedules(); } catch (e) {}
@@ -5722,10 +5776,27 @@ function switchTab(name) {
   if (name === 'info') {
     // 席情報タブ：アクティビティログを再描画
     try { fetchAndRenderActivityLog(); } catch (e) {}
-    // ★ Claude (2026-06-22): 管理者なら幽霊掃除カードを表示
+    // ★ Claude (2026-06-22): 管理者なら幽霊掃除カード＋商品マスタ更新カードを表示
     try {
+      const isAdmin = !!(currentUser && currentUser.isAdmin);
       const gc = document.getElementById('ghostCleanupCard');
-      if (gc) gc.classList.toggle('hidden', !(currentUser && currentUser.isAdmin));
+      if (gc) gc.classList.toggle('hidden', !isAdmin);
+      const pc = document.getElementById('productReloadCard');
+      if (pc) pc.classList.toggle('hidden', !isAdmin);
+      // 商品マスタの最終取得時刻を表示
+      try {
+        const statusEl = document.getElementById('productLoadStatus');
+        if (statusEl) {
+          const at = localStorage.getItem(TAKEOUT_PRODUCTS_AT_KEY);
+          if (at) {
+            const d = new Date(at);
+            statusEl.textContent = '最終取得: ' + d.toLocaleString('ja-JP')
+                                + ' / 件数: ' + (TAKEOUT_PRODUCTS ? TAKEOUT_PRODUCTS.length : 0);
+          } else {
+            statusEl.textContent = '未取得（ハードコード版を使用中）';
+          }
+        }
+      } catch (e) {}
     } catch (e) {}
   }
   // ★ 一覧 or 座席表へ切替時、最近の同期から30秒以上経っていればバックグラウンド同期して両ビューを更新
@@ -7899,9 +7970,122 @@ function buildEventTitle(r) {
 // カテゴリー: 鳥料理（やきとり）/ その他（つまみ・ご飯物・スイーツ）/ リボルバード（ピザ・スモーク系）
 const TAKEOUT_CATEGORIES = ['鳥料理', 'その他', 'リボルバード'];
 
+// ★ Claude (2026-06-22): 商品マスタを GAS API から取得する方式へ移行。
+//   ハードコード版は GAS 接続失敗時の最終フォールバックとして保持（後方互換）。
+//   - 取得元: タイムカードv4 スプレッドシートの「商品マスタ」シート
+//   - 取得タイミング: 起動時に1回 + 手動更新ボタンで都度更新
+//   - キャッシュ: localStorage `takeout_products_cache` に保存
+//   - スキーマ正規化: GAS 側で {id, store, category, name, price, options[], sortOrder,
+//                        active, customPrice, customMemo, note} 形式に整形済みのため
+//                        PWA 側は { cat: category } の互換マッピングを行う。
+const TAKEOUT_PRODUCTS_CACHE_KEY = 'takeout_products_cache_v1';
+const TAKEOUT_PRODUCTS_AT_KEY    = 'takeout_products_at_v1';
+let _takeoutProductsLoading = false;
+
+function _normalizeProductFromApi(p) {
+  // APIスキーマ → PWA内部スキーマへ変換
+  // PWA は `cat` を参照する箇所が多いので、`category` を `cat` にもコピー
+  const out = {
+    id: String(p.id || '').trim(),
+    pid: String(p.id || '').trim(),         // 旧コードで pid と id が混在しているため両方
+    cat: String(p.category || '').trim(),
+    category: String(p.category || '').trim(),
+    store: String(p.store || '').trim(),
+    name: String(p.name || '').trim(),
+    price: parseInt(p.price, 10) || 0,
+    options: Array.isArray(p.options) ? p.options.slice() : [],
+    sortOrder: parseInt(p.sortOrder, 10) || 99,
+    active: p.active !== false,
+    customPrice: !!p.customPrice,
+    customMemo: !!p.customMemo,
+    note: String(p.note || '').trim()
+  };
+  // options が空配列なら省略（既存ハードコードは省略形）
+  if (out.options.length === 0) delete out.options;
+  return out;
+}
+
+async function loadTakeoutProducts(opts) {
+  const force = !!(opts && opts.force);
+  if (_takeoutProductsLoading) return; // 二重起動防止
+  if (!isWebhookConfigured()) {
+    console.warn('[商品マスタ] Webhook未設定 → ハードコード版を継続利用');
+    return;
+  }
+  _takeoutProductsLoading = true;
+  try {
+    const url = WEBHOOK_URL
+              + '?action=getProducts'
+              + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+              + (force ? '&_t=' + Date.now() : ''); // force時はクエリでキャッシュバスト
+    const r = await fetch(url);
+    const data = await r.json();
+    if (data && data.ok && Array.isArray(data.products) && data.products.length > 0) {
+      const normalized = data.products.map(_normalizeProductFromApi).filter(function(p) { return p.id && p.name; });
+      if (normalized.length > 0) {
+        TAKEOUT_PRODUCTS = normalized;
+        try {
+          localStorage.setItem(TAKEOUT_PRODUCTS_CACHE_KEY, JSON.stringify(normalized));
+          localStorage.setItem(TAKEOUT_PRODUCTS_AT_KEY, new Date().toISOString());
+        } catch (e) { /* quota 超過は無視 */ }
+        // UI に反映（お土産メニューが開いていれば再描画）
+        try { if (typeof renderProductGrid === 'function') renderProductGrid(); } catch (e) {}
+        console.log('[商品マスタ] GASから取得: ' + normalized.length + '件');
+        return;
+      }
+    }
+    // データ無し or 異常 → キャッシュ利用
+    console.warn('[商品マスタ] GAS取得失敗。キャッシュを使用', data);
+    _loadProductsFromCache();
+  } catch (err) {
+    console.warn('[商品マスタ] 通信エラー。キャッシュを使用', err);
+    _loadProductsFromCache();
+  } finally {
+    _takeoutProductsLoading = false;
+  }
+}
+
+function _loadProductsFromCache() {
+  try {
+    const raw = localStorage.getItem(TAKEOUT_PRODUCTS_CACHE_KEY);
+    if (raw) {
+      const arr = JSON.parse(raw);
+      if (Array.isArray(arr) && arr.length > 0) {
+        TAKEOUT_PRODUCTS = arr;
+        console.log('[商品マスタ] localStorageキャッシュから復元: ' + arr.length + '件');
+        try { if (typeof renderProductGrid === 'function') renderProductGrid(); } catch (e) {}
+        return;
+      }
+    }
+  } catch (e) {}
+  console.log('[商品マスタ] キャッシュなし。ハードコード版を継続利用');
+}
+
+// ★ Claude (2026-06-22): 手動更新ボタンから呼ばれる関数。GASキャッシュもバストする。
+async function reloadProductsManually() {
+  const btn = document.getElementById('reloadProductsBtn');
+  const statusEl = document.getElementById('productLoadStatus');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 更新中...'; }
+  if (statusEl) statusEl.textContent = '取得中…';
+  try {
+    await loadTakeoutProducts({ force: true });
+    if (statusEl) {
+      const at = localStorage.getItem(TAKEOUT_PRODUCTS_AT_KEY);
+      const ts = at ? new Date(at).toLocaleString('ja-JP') : '不明';
+      statusEl.textContent = '✓ 更新完了 ' + ts + ' / 件数: ' + TAKEOUT_PRODUCTS.length;
+    }
+    if (btn) { btn.textContent = '✓ 更新OK'; setTimeout(function() { btn.disabled = false; btn.textContent = '🔄 今すぐ更新'; }, 2500); }
+  } catch (err) {
+    if (statusEl) statusEl.textContent = '⚠ エラー: ' + String(err);
+    if (btn) { btn.disabled = false; btn.textContent = '🔄 今すぐ更新'; }
+  }
+}
+
 // option: 選択肢（塩/タレ など。あれば各オプション別の数量管理）
 // customPrice / customMemo: true なら任意金額・メモ入力を許可
-const TAKEOUT_PRODUCTS = [
+// ★ Claude (2026-06-22): const → let に変更（GASからの取得結果で再代入するため）。
+//   下記配列は GAS 接続失敗時のフォールバック値。
+let TAKEOUT_PRODUCTS = [
   // === 鳥料理（やきとり） ===
   { id: 'Y01', cat: '鳥料理', name: 'モモ唐揚げ',                price: 770, options: ['一本', 'ブツ'] },
   { id: 'Y02', cat: '鳥料理', name: 'モモ焼',                    price: 770, options: ['一本', 'ブツ'] },
