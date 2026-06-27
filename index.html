@@ -1718,17 +1718,14 @@ select.time-select option:disabled { color: #aaa; }
     <div class="cal-grid-wrap" data-target="resDate" data-onchange="onResDateChange"></div>
   </div>
 
-  <div class="people-takeout-row" style="display:flex;gap:10px;align-items:stretch;margin-bottom:12px;">
-    <div class="field" style="flex:1;margin-bottom:0;">
-      <label>ご人数<span class="req">*</span></label>
-      <div class="stepper">
-        <button type="button" id="numMinus" aria-label="人数マイナス">−</button>
-        <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" onchange="onResPeopleChange()" oninput="onResPeopleChange()" />
-        <button type="button" id="numPlus" aria-label="人数プラス">＋</button>
-      </div>
-    </div>
-    <div style="flex:1;display:flex;align-items:flex-end;">
-      <button class="takeout-btn" type="button" onclick="startTakeoutFlow()" style="width:100%;margin:0;padding:14px 8px;">🥡 お土産<br>はこちら →</button>
+  <!-- ★ Claude (2026-06-22): お土産ボタンは削除（一覧/座席表で既に新規予約を選択済みのため不要）。
+       人数欄を単独配置し、シンプルに保つ。 -->
+  <div class="field" style="margin-bottom:12px;">
+    <label>ご人数<span class="req">*</span></label>
+    <div class="stepper">
+      <button type="button" id="numMinus" aria-label="人数マイナス">−</button>
+      <input type="number" id="resPeople" value="2" min="1" max="80" inputmode="numeric" onchange="onResPeopleChange()" oninput="onResPeopleChange()" />
+      <button type="button" id="numPlus" aria-label="人数プラス">＋</button>
     </div>
   </div>
 
@@ -5867,17 +5864,27 @@ function checkAvailability() {
   const result = document.getElementById('availabilityResult');
   result.innerHTML = '';
 
-  // 1. 営業日チェック（現店舗の休業日）
+  // ★ Claude (2026-06-22): 日付を「6月28日（土）」形式に整形（休業/満席/通常 全分岐で再利用）
+  const _wkJp = ['日','月','火','水','木','金','土'];
+  let _dateBigHtml = date;
+  try {
+    const _d = new Date(date + 'T00:00:00');
+    if (!isNaN(_d.getTime())) {
+      _dateBigHtml = (_d.getMonth() + 1) + '月' + _d.getDate() + '日（' + _wkJp[_d.getDay()] + '）';
+    }
+  } catch (e) {}
+
+  // 1. 営業日チェック（現店舗の休業日）→ 赤背景・日付＋休業のみ表示
   const holiday = getHolidays().find(h => h.date === date);
   if (holiday) {
-    result.innerHTML = '<div class="result ng">'
-      + '<strong>❌ ' + date + ' は' + getStoreLabel() + 'の休業日です</strong>'
-      + '事由：' + holiday.reason + '（' + holiday.kind + '）<br>'
-      + '前後のお日にちでご案内ください。</div>';
+    result.innerHTML = '<div class="result ng" style="text-align:center;">'
+      + '<span class="result-date-big">' + _dateBigHtml + '</span>'
+      + '<div style="font-size:15px;font-weight:700;margin-top:4px;">休業日</div>'
+      + '</div>';
     return;
   }
 
-  // 2. 当日予約合計と全体容量チェック（現店舗のみ）
+  // 2. 当日予約合計と全体容量チェック（現店舗のみ）→ 容量超過なら赤背景・日付＋満席のみ表示
   const cap = getStoreCapacity();
   const dayRes = reservations.filter(r =>
     (r.store || 'torihashi') === currentStore
@@ -5887,31 +5894,17 @@ function checkAvailability() {
   const newTotal = dayTotal + people;
 
   if (newTotal > cap.maxTotal) {
-    result.innerHTML = '<div class="result ng">'
-      + '<strong>❌ ' + getStoreLabel() + '最大' + cap.maxTotal + '名を超えてしまいます</strong>'
-      + '当日合計予約：' + dayTotal + '名 + 新規' + people + '名 = ' + newTotal + '名（上限' + cap.maxTotal + '名）<br>'
-      + '→ ' + cap.overflowMsg + 'への誘導をご案内ください</div>';
+    result.innerHTML = '<div class="result ng" style="text-align:center;">'
+      + '<span class="result-date-big">' + _dateBigHtml + '</span>'
+      + '<div style="font-size:15px;font-weight:700;margin-top:4px;">満席</div>'
+      + '</div>';
     return;
   }
 
-  // 3. 各時刻スロットの空き状況を表示
-  // ★ Claude (2026-06-22): 仮押さえ判定を撤廃したため「団体／少人数」の案内表示も削除。
-  //   isGroup 変数は他で参照していないので合わせて削除。
-  const usagePercent = Math.round(newTotal / cap.normalCap * 100);
-
-  // ★ Claude (2026-06-22): 日付を「6月28日（土）」形式に整形し、倍サイズ＆曜日付きで表示
-  const _wkJp = ['日','月','火','水','木','金','土'];
-  let _dateBigHtml = date;
-  try {
-    const _d = new Date(date + 'T00:00:00');
-    if (!isNaN(_d.getTime())) {
-      _dateBigHtml = (_d.getMonth() + 1) + '月' + _d.getDate() + '日（' + _wkJp[_d.getDay()] + '）';
-    }
-  } catch (e) {}
+  // 3. 営業日 → 緑背景・日付のみ（その他の情報は省略）
   result.innerHTML =
-    '<div class="result ok">'
-    + '<strong>✓ <span class="result-date-big">' + _dateBigHtml + '</span> は' + getStoreLabel() + 'の営業日です</strong>'
-    + '当日予約合計 ' + dayTotal + '名 → 受付後 ' + newTotal + '名（使用率 ' + usagePercent + '%）'
+    '<div class="result ok" style="text-align:center;">'
+    + '<span class="result-date-big">' + _dateBigHtml + '</span>'
     + '</div>'
     + '<div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text);">'
     + '時刻を選択（15分刻み）'
@@ -8754,6 +8747,16 @@ function quickNewReservationFromList() {
     const f = document.getElementById('step1DateField');
     if (f) f.style.display = 'none';
   } catch (e) {}
+  // ★ Claude (2026-06-22): iOS Safari の数字キーパッド即起動のため、
+  //   ユーザージェスチャの同じ呼び出しスタック内で focus() を同期実行する。
+  //   setTimeout の中だと iOS は「ユーザー操作起点ではない」と判定してキーボードを開かない。
+  try {
+    const ppl = document.getElementById('resPeople');
+    if (ppl) {
+      ppl.focus({ preventScroll: false });
+      ppl.select();
+    }
+  } catch (e) {}
   // ★ Claude (2026-06-22): 自動で空き判定を実行（旧来は「空き時間を確認」ボタンタップ必須だった）
   setTimeout(function() {
     try { if (typeof checkAvailability === 'function') checkAvailability(); } catch (e) {}
@@ -9231,6 +9234,11 @@ function renderUnassignedRail(dayRes) {
         // ★ Claude (2026-06-22): 既に渡された日付を使うので日付フィールドは閉じておく
         const f = document.getElementById('step1DateField');
         if (f) f.style.display = 'none';
+        // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus
+        try {
+          const _ppl = document.getElementById('resPeople');
+          if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+        } catch (e) {}
         if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
         autoAdvanceFromSeatMap();
       };
