@@ -189,6 +189,15 @@ button.secondary:active { background: var(--primary); color: white; }
 .result.ng { background: var(--error-bg); color: var(--error); border-left: 4px solid var(--error); }
 .result.warn { background: var(--warning-bg); color: var(--warning); border-left: 4px solid var(--warning); }
 .result strong { display: block; font-size: 15px; margin-bottom: 4px; }
+/* ★ Claude (2026-06-22): 営業日メッセージ内の日付を倍サイズで強調表示 */
+.result .result-date-big {
+  display: inline-block;
+  font-size: 30px;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 2px 4px 2px 0;
+  vertical-align: middle;
+}
 .result ul { margin: 6px 0 0; padding-left: 18px; }
 .result li { margin-bottom: 3px; }
 
@@ -5890,9 +5899,18 @@ function checkAvailability() {
   //   isGroup 変数は他で参照していないので合わせて削除。
   const usagePercent = Math.round(newTotal / cap.normalCap * 100);
 
+  // ★ Claude (2026-06-22): 日付を「6月28日（土）」形式に整形し、倍サイズ＆曜日付きで表示
+  const _wkJp = ['日','月','火','水','木','金','土'];
+  let _dateBigHtml = date;
+  try {
+    const _d = new Date(date + 'T00:00:00');
+    if (!isNaN(_d.getTime())) {
+      _dateBigHtml = (_d.getMonth() + 1) + '月' + _d.getDate() + '日（' + _wkJp[_d.getDay()] + '）';
+    }
+  } catch (e) {}
   result.innerHTML =
     '<div class="result ok">'
-    + '<strong>✓ ' + date + ' は' + getStoreLabel() + 'の営業日です</strong>'
+    + '<strong>✓ <span class="result-date-big">' + _dateBigHtml + '</span> は' + getStoreLabel() + 'の営業日です</strong>'
     + '当日予約合計 ' + dayTotal + '名 → 受付後 ' + newTotal + '名（使用率 ' + usagePercent + '%）'
     + '</div>'
     + '<div style="margin-top:14px;font-size:13px;font-weight:600;color:var(--text);">'
