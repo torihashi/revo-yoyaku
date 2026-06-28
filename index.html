@@ -9286,10 +9286,21 @@ function handleSeatClick(seatId) {
   }
   // 空席 → 確認なしで即座に新規予約フローへ
   state.date = date;
-  state.time = time;
+  // ★ Claude (2026-06-22): 時刻を未確定にして step2 への自動遷移を抑止。
+  //   仕様: 座席表 → 空席タップ → 「空き状況確認画面（step1）」に必ず止まる。
+  //   自動遷移は autoAdvanceFromSeatMap 内で「desiredTime があれば」発火するため、
+  //   state.time を空にすれば checkAvailability で時刻スロット表示までで止まる。
+  state.time = '';
   state.candidateSeats = [{ tables: seatId, area: '', min: 1, max: 99 }];
   state.preselectedSeat = seatId;
   switchTab('new');
+  // step1 を確実に表示（step2/3 が出ていた場合の保険）
+  try {
+    document.getElementById('step1').classList.remove('hidden');
+    document.getElementById('step2').classList.add('hidden');
+    document.getElementById('step3').classList.add('hidden');
+    state.step = 1;
+  } catch (e) {}
   // フォームに反映
   const dateInp = document.getElementById('resDate');
   if (dateInp) dateInp.value = date;
@@ -9297,16 +9308,11 @@ function handleSeatClick(seatId) {
   const _f = document.getElementById('step1DateField');
   if (_f) _f.style.display = 'none';
   // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus
-  //   autoAdvanceFromSeatMap は時刻ありなら step2 へ進むが、それまでの間に人数調整できる
   try {
     const _ppl = document.getElementById('resPeople');
     if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
   } catch (e) {}
-  document.querySelectorAll('#resTimeGrid .time-btn').forEach(function(b) {
-    b.classList.toggle('selected', b.getAttribute('data-time') === time);
-    if (b.getAttribute('data-time') === time) state.time = time;
-  });
-  // プリセット席バナー表示 ＋ 自動で空き判定 ＋ 名前欄フォーカス
+  // プリセット席バナー表示 ＋ 自動で空き判定（時刻選択は手動で行う）
   updatePreselectBanner();
   autoAdvanceFromSeatMap();
 }
