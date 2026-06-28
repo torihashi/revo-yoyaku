@@ -9223,19 +9223,30 @@ function renderUnassignedRail(dayRes) {
         // それ以外：席未設定で新規予約フロー（確認なし即実行）
         const date = smState.date || todayStr();
         state.date = date;
+        // ★ Claude (2026-06-22): 時刻未確定にして step2 への自動遷移を抑止（step1で止める）
+        state.time = '';
         state.preselectedSeat = '未設定';
         switchTab('new');
+        // step1 表示を確実に
+        try {
+          document.getElementById('step1').classList.remove('hidden');
+          document.getElementById('step2').classList.add('hidden');
+          document.getElementById('step3').classList.add('hidden');
+          state.step = 1;
+        } catch (e) {}
         const dateInp = document.getElementById('resDate');
         if (dateInp) dateInp.value = date;
         // ★ Claude (2026-06-22): 既に渡された日付を使うので日付フィールドは閉じておく
         const f = document.getElementById('step1DateField');
         if (f) f.style.display = 'none';
-        // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus
+        // ★ Claude (2026-06-22): focusの前にレイアウト変化を全て済ませる（focus後の変化は
+        //   iOSキーパッドが閉じてしまう原因になる）
+        if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
+        // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus（最後の同期処理）
         try {
           const _ppl = document.getElementById('resPeople');
           if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
         } catch (e) {}
-        if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
         autoAdvanceFromSeatMap();
       };
     }
@@ -9307,13 +9318,17 @@ function handleSeatClick(seatId) {
   // ★ Claude (2026-06-22): 日付は確定済みなので日付フィールドは閉じる
   const _f = document.getElementById('step1DateField');
   if (_f) _f.style.display = 'none';
-  // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus
+  // ★ Claude (2026-06-22): フォーカスする前にレイアウト変化を全て先に済ませる。
+  //   updatePreselectBanner の表示切替がレイアウトシフトを起こし、focus 直後に発火すると
+  //   iOS が「ユーザー操作起点ではない再フォーカス」と判定してキーパッドを閉じてしまうため。
+  updatePreselectBanner();
+  // 空き判定もユーザージェスチャの最終ステップで開始（focusより後だとレイアウト変化で focus 消失）
+  // → autoAdvanceFromSeatMap は内部 setTimeout で動くのでここで呼んでもfocusに影響しない順序にする
+  // ★ iOS数字キーパッドを即起動するため同期 focus（ここがクリックハンドラの最後の同期処理）
   try {
     const _ppl = document.getElementById('resPeople');
     if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
   } catch (e) {}
-  // プリセット席バナー表示 ＋ 自動で空き判定（時刻選択は手動で行う）
-  updatePreselectBanner();
   autoAdvanceFromSeatMap();
 }
 
@@ -9766,8 +9781,12 @@ function autoAdvanceFromSeatMap() {
         }
       }
       // ③ 人数欄にフォーカス
+      // ★ Claude (2026-06-22): 既にフォーカスされている場合は再フォーカスしない。
+      //   再フォーカスはユーザージェスチャ起点ではないため、iOSが「キーパッドを閉じる」動作を
+      //   引き起こしてしまうことがある。呼び出し元（handleSeatClick / 未設定枠タップ）で
+      //   同期 focus 済みなので、ここでの再フォーカスは原則不要。
       const peopleInp = document.getElementById('resPeople');
-      if (peopleInp) {
+      if (peopleInp && document.activeElement !== peopleInp) {
         peopleInp.focus();
         peopleInp.select();
       }
