@@ -7746,9 +7746,10 @@ function openTakeoutEditModal(resId) {
 
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  // ★ Claude (2026-06-22): 30分刻み → 15分刻みに変更（新規お土産フローと統一）
   const timeOpts = [];
   for (let h = 11; h <= 21; h++) {
-    for (let m of [0, 30]) {
+    for (let m of [0, 15, 30, 45]) {
       const t = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
       timeOpts.push('<option value="' + t + '"' + (t === r.time ? ' selected' : '') + '>' + t + '</option>');
     }
@@ -8240,10 +8241,16 @@ let TAKEOUT_PRODUCTS = [
 let currentCategory = '鳥料理'; // デフォルト表示カテゴリー
 
 // お土産受取時刻（通常営業より早い時間帯も含む）
-const TAKEOUT_TIME_SLOTS = [
-  '15:00','15:30','16:00','16:30','17:00','17:30',
-  '18:00','18:30','19:00','19:30','20:00','20:30','21:00','21:30'
-];
+// ★ Claude (2026-06-22): 30分刻み → 15分刻みに変更（より細かい受取時刻に対応）
+const TAKEOUT_TIME_SLOTS = (function() {
+  const arr = [];
+  for (let h = 15; h <= 21; h++) {
+    for (let m of [0, 15, 30, 45]) {
+      arr.push(String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'));
+    }
+  }
+  return arr;
+})();
 
 // 注文エントリ配列に変更（オプション・任意金額に対応）
 // 各エントリ: { id, pid, name, option, price, qty, memo, isCustom }
