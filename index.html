@@ -6919,6 +6919,11 @@ function closeModalAndReset() {
   if (rh) { rh.innerHTML = ''; rh.classList.remove('show'); }
   clearHandwriting('memoCanvas');
   backToStep1();
+  // ★ Claude (2026-06-22): 「続けて予約する」でモーダルを閉じた後、人数欄に同期 focus（iOS数字キーパッド）
+  try {
+    const _ppl = document.getElementById('resPeople');
+    if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+  } catch (e) {}
 }
 
 function closeModalAndShowList() {
@@ -9291,6 +9296,12 @@ function handleSeatClick(seatId) {
   // ★ Claude (2026-06-22): 日付は確定済みなので日付フィールドは閉じる
   const _f = document.getElementById('step1DateField');
   if (_f) _f.style.display = 'none';
+  // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus
+  //   autoAdvanceFromSeatMap は時刻ありなら step2 へ進むが、それまでの間に人数調整できる
+  try {
+    const _ppl = document.getElementById('resPeople');
+    if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+  } catch (e) {}
   document.querySelectorAll('#resTimeGrid .time-btn').forEach(function(b) {
     b.classList.toggle('selected', b.getAttribute('data-time') === time);
     if (b.getAttribute('data-time') === time) state.time = time;
