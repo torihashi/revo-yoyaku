@@ -7,6 +7,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="予約アプリ" />
+<!-- ★ Claude (2026-06-22): 縦画面ロックは manifest.json の "orientation":"portrait" に委ねる。
+     ホーム画面に追加された PWA 起動時のみ縦固定が効く（Safari 通常起動では効かない）。 -->
 <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png?v=2" />
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png?v=2" />
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png?v=2" />
@@ -4699,6 +4701,27 @@ function parsePeopleHistoryFromDescription(desc) {
   return null;
 }
 
+// ★ Claude (2026-06-22): GCal description の「人数: N名（中学生以上 X / 小学生 Y / 幼児 Z）」行から
+//   子供の内訳を抽出するヘルパー。端末間で子供内訳が共有されない問題を修正するため。
+function parseKidsFromDescription(desc) {
+  if (!desc) return null;
+  const lines = String(desc).split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = (lines[i] || '').trim();
+    if (line.indexOf('人数:') === 0 || line.indexOf('人数:') === 0 || line.indexOf('人数:') === 0) {
+      // 例: 「人数: 6名（中学生以上 4 / 小学生 1 / 幼児 1）」
+      const m = line.match(/小学生\s*(\d+)\s*[\/／]\s*幼児\s*(\d+)/);
+      if (m) {
+        return {
+          kidElementary: parseInt(m[1], 10) || 0,
+          kidInfant: parseInt(m[2], 10) || 0
+        };
+      }
+    }
+  }
+  return null;
+}
+
 // ★ Claude (2026-06-22): GCal description から「予約ID: XXX」行を抽出するヘルパー。
 //   用途: 予約作成直後、callWebhook の resolve 前に sync が走った場合、
 //         ローカル予約は gcalEventId 未設定 → 既存検索が失敗 → 重複作成のバグが起きていた。
@@ -4912,6 +4935,16 @@ function mergeFromCalendar(items) {
         const incomingPhone = parsePhoneFromDescription(ev.description || '');
         if (incomingPhone && incomingPhone !== (existing.phone || '')) {
           existing.phone = incomingPhone; changed = true;
+        }
+        // ★ Claude (2026-06-22): 子供内訳（幼児/小学生）も description から同期
+        const incomingKids = parseKidsFromDescription(ev.description || '');
+        if (incomingKids) {
+          if (incomingKids.kidInfant !== (existing.kidInfant || 0)) {
+            existing.kidInfant = incomingKids.kidInfant; changed = true;
+          }
+          if (incomingKids.kidElementary !== (existing.kidElementary || 0)) {
+            existing.kidElementary = incomingKids.kidElementary; changed = true;
+          }
         }
       }
       if (existing.date !== evDate)  { existing.date = evDate; changed = true; }
@@ -6922,7 +6955,7 @@ function closeModalAndReset() {
   // ★ Claude (2026-06-22): 「続けて予約する」でモーダルを閉じた後、人数欄に同期 focus（iOS数字キーパッド）
   try {
     const _ppl = document.getElementById('resPeople');
-    if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+    if (_ppl) { _ppl.focus({ preventScroll: true }); _ppl.select(); }
   } catch (e) {}
 }
 
@@ -7447,6 +7480,20 @@ function openEditModal(resId) {
     + '<div class="field"><label>日付</label><input type="date" id="editDate" value="' + r.date + '" /></div>'
     + '<div class="field"><label>時刻（15分刻み）</label><select id="editTime">' + timeOpts.join('') + '</select></div>'
     + '<div class="field"><label>人数</label><input type="number" id="editPeople" value="' + r.people + '" min="1" max="80" /></div>'
+    // ★ Claude (2026-06-22): 子供の内訳を編集できるように
+    + '<div class="field" style="background:#f9f3eb;padding:10px;border-radius:8px;">'
+    +   '<label style="font-size:12px;color:var(--muted);">お子様の内訳（任意）</label>'
+    +   '<div class="row">'
+    +     '<div class="field" style="margin-bottom:0;">'
+    +       '<label style="font-size:11px;color:var(--muted)">幼児</label>'
+    +       '<input type="number" id="editKidInfant" value="' + (parseInt(r.kidInfant, 10) || 0) + '" min="0" max="20" inputmode="numeric" />'
+    +     '</div>'
+    +     '<div class="field" style="margin-bottom:0;">'
+    +       '<label style="font-size:11px;color:var(--muted)">小学生</label>'
+    +       '<input type="number" id="editKidElementary" value="' + (parseInt(r.kidElementary, 10) || 0) + '" min="0" max="20" inputmode="numeric" />'
+    +     '</div>'
+    +   '</div>'
+    + '</div>'
     + '<div class="field"><label>コース</label><select id="editCourse">' + courseOpts + '</select></div>'
     + '<div class="field"><label>お名前（カナ）</label><input type="text" id="editName" value="' + (r.name || '') + '" /></div>'
     + '<div class="field"><label>電話番号</label><input type="tel" id="editPhone" inputmode="numeric" value="' + (r.phone || '') + '" /></div>'
@@ -7485,6 +7532,9 @@ function openEditModal(resId) {
     const newCourse = document.getElementById('editCourse').value || r.course;
     const newName   = document.getElementById('editName').value.trim() || r.name;
     const newPhone  = document.getElementById('editPhone').value.trim();
+    // ★ Claude (2026-06-22): 子供の内訳も保存
+    const newKidInfant     = parseInt(document.getElementById('editKidInfant').value, 10) || 0;
+    const newKidElementary = parseInt(document.getElementById('editKidElementary').value, 10) || 0;
     const editBadges = Array.prototype.slice.call(overlay.querySelectorAll('.edit-note-badge-btn.selected[data-edit-note-badge]'))
       .map(function(btn) { return btn.getAttribute('data-edit-note-badge') || ''; })
       .filter(Boolean);
@@ -7499,6 +7549,8 @@ function openEditModal(resId) {
     r.name   = newName;
     r.phone  = newPhone;
     r.notes  = newNotes;
+    r.kidInfant     = newKidInfant;
+    r.kidElementary = newKidElementary;
     saveReservations();
     overlay.remove();
     renderReservationList();
@@ -7518,11 +7570,16 @@ function openEditModal(resId) {
       const peopleHistoryLineEdit = (Array.isArray(r.peopleHistory) && r.peopleHistory.length > 1)
         ? '人数履歴: ' + r.peopleHistory.join('→')
         : null;
+      // ★ Claude (2026-06-22): 子供内訳を description に含めて端末間共有
+      const _kI = parseInt(r.kidInfant, 10) || 0;
+      const _kE = parseInt(r.kidElementary, 10) || 0;
+      const _adult = Math.max(0, (r.people || 0) - _kI - _kE);
       const newDesc  = [
         '予約ID: ' + r.id,
         // ★ Claude (2026-06-22): 仮押さえ撤廃。cancelled / confirmed のみ
         'ステータス: ' + (r.status === 'cancelled' ? '取消' : '確定'),
-        '人数: ' + r.people + '名',
+        // ★ Claude (2026-06-22): 人数行に内訳を含める（mergeFromCalendarがこの形式をパース）
+        '人数: ' + r.people + '名（中学生以上 ' + _adult + ' / 小学生 ' + _kE + ' / 幼児 ' + _kI + '）',
         ...(peopleHistoryLineEdit ? [peopleHistoryLineEdit] : []),
         '名前: ' + r.name,
         'コース: ' + (course ? course.name : '席だけ'),
@@ -8901,6 +8958,13 @@ function renderReservationList() {
         +   '<div class="ri-details">'
         +     courseBadgeHtml
         +     '<div class="meta">席：' + seatHtml + ' ／ ' + (r.phone || '') + (courseBadgeHtml ? '' : (metaCourseLabel ? ' ／ ' + metaCourseLabel : '')) + '</div>'
+        // ★ Claude (2026-06-22): 子供の内訳を一覧詳細に表示
+        +     ((parseInt(r.kidInfant, 10) > 0 || parseInt(r.kidElementary, 10) > 0)
+            ? '<div class="meta">👶 内訳: 中学生以上 ' + Math.max(0, (r.people || 0) - (r.kidInfant || 0) - (r.kidElementary || 0)) + '名'
+              + (r.kidElementary > 0 ? ' / 小学生 ' + r.kidElementary + '名' : '')
+              + (r.kidInfant > 0 ? ' / 幼児 ' + r.kidInfant + '名' : '')
+              + '</div>'
+            : '')
         +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
         +     '<div class="actions">'
         +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
@@ -9245,7 +9309,7 @@ function renderUnassignedRail(dayRes) {
         // ★ Claude (2026-06-22): iOS数字キーパッドを即起動するため同期 focus（最後の同期処理）
         try {
           const _ppl = document.getElementById('resPeople');
-          if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+          if (_ppl) { _ppl.focus({ preventScroll: true }); _ppl.select(); }
         } catch (e) {}
         autoAdvanceFromSeatMap();
       };
@@ -9327,7 +9391,7 @@ function handleSeatClick(seatId) {
   // ★ iOS数字キーパッドを即起動するため同期 focus（ここがクリックハンドラの最後の同期処理）
   try {
     const _ppl = document.getElementById('resPeople');
-    if (_ppl) { _ppl.focus({ preventScroll: false }); _ppl.select(); }
+    if (_ppl) { _ppl.focus({ preventScroll: true }); _ppl.select(); }
   } catch (e) {}
   autoAdvanceFromSeatMap();
 }
