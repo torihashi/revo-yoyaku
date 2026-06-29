@@ -1889,7 +1889,8 @@ select.time-select option:disabled { color: #aaa; }
 <!-- ============================================ -->
 <!-- TAB: 本日の予約 -->
 <!-- ============================================ -->
-<section id="tab-list" class="hidden">
+<!-- ★ Claude (2026-06-22): 一覧をデフォルト表示に変更（class="hidden" を外す） -->
+<section id="tab-list">
   <div class="card cal-only">
     <!-- ★ Claude (2026-06-21): 月カレンダーをメイン表示に。装飾UI（凡例・同期ボタン等）は最小化。 -->
     <div class="field sticky-date">
@@ -1937,7 +1938,8 @@ select.time-select option:disabled { color: #aaa; }
 <!-- ============================================ -->
 <!-- TAB: 座席表 -->
 <!-- ============================================ -->
-<section id="tab-seatmap">
+<!-- ★ Claude (2026-06-22): 座席表は起動時非表示（一覧がデフォルトに） -->
+<section id="tab-seatmap" class="hidden">
   <div class="card cal-only">
     <!-- ★ Claude (2026-06-21): 月カレンダーをメイン表示に。座席表本体は選択日に応じて以下に展開。 -->
     <div class="field sticky-date">
@@ -2178,10 +2180,12 @@ select.time-select option:disabled { color: #aaa; }
 </main>
 
 <!-- Bottom navigation -->
+<!-- ★ Claude (2026-06-22): タブ順を「一覧→座席表→バイト管理→席情報」に並び替え。
+     一覧をデフォルト表示にすることで、日々の業務でまず予約状況が見える設計に。 -->
 <nav class="bottom-nav">
-  <button class="active" onclick="switchTab('seatmap')"><span class="icon">🪑</span>座席表</button>
+  <button class="active" onclick="switchTab('list')"><span class="icon">📋</span>一覧</button>
+  <button onclick="switchTab('seatmap')"><span class="icon">🪑</span>座席表</button>
   <button onclick="switchTab('staff')"><span class="icon">👥</span>バイト管理</button>
-  <button onclick="switchTab('list')"><span class="icon">📋</span>一覧</button>
   <button onclick="switchTab('info')"><span class="icon">ℹ️</span>席情報</button>
 </nav>
 
@@ -2646,13 +2650,22 @@ function attemptLogin(email, pin) {
     .then(function(resp) {
       if (resp && resp.ok) {
         const wasLoggedOut = !currentUser;
+        // ★ Claude (2026-06-22): 特定ユーザーのデフォルト店舗を上書き（サーバ側が未設定の場合）
+        //   下村利春はリボルバード管理者なのでリボルバードを初期表示にする。
+        //   将来別の管理者が追加されれば、ここの USER_DEFAULT_STORE_OVERRIDES に追記。
+        //   サーバ側（タイムカードv4 従業員マスタ）で defaultStore が設定されていれば、そちら優先で OK。
+        const USER_DEFAULT_STORE_OVERRIDES = {
+          '下村利春': 'revolverd'
+        };
+        const overrideStore = USER_DEFAULT_STORE_OVERRIDES[String(resp.name || '').trim()];
         currentUser = {
           email: email,
           pin: pin, // 再検証用に保存（端末内のみ・ネットには平文で都度送信）
           name: resp.name,
           group: resp.group,
           isAdmin: !!resp.isAdmin,
-          defaultStore: resp.defaultStore || 'torihashi',
+          // override（特定ユーザー）が最優先、次にサーバ値、最後にデフォルト
+          defaultStore: overrideStore || resp.defaultStore || 'torihashi',
           loggedInAt: Date.now()
         };
         saveAuth(currentUser);
@@ -5700,7 +5713,11 @@ window.addEventListener('DOMContentLoaded', () => {
   renderHolidays();
   if (typeof rerenderSeatPref === 'function') rerenderSeatPref();
 
-  // 座席表をデフォルト表示なので、起動直後に初期化
+  // ★ Claude (2026-06-22): デフォルトを一覧タブに変更。一覧の予約リストを初回描画。
+  try { if (typeof renderReservationList === 'function') renderReservationList(); } catch (e) {}
+  try { if (typeof renderStaffRail === 'function') renderStaffRail(); } catch (e) {}
+  // 座席表は遅延初期化でも問題なし（タブ切替時に initSeatMap が走る）が、
+  // 初期化を済ませておくと一覧→座席表切替が体感速い。
   if (typeof initSeatMap === 'function') {
     try { initSeatMap(); } catch (e) { console.error('initSeatMap failed:', e); }
   }
@@ -7012,6 +7029,15 @@ function isPendingSeat(rawSeat) {
   // Yahoo!リザベ生の '指定なし' '人数で割振り' 等のフリーテキスト
   if (rawSeat.indexOf('指定') >= 0 && rawSeat.indexOf('なし') >= 0) return true;
   if (rawSeat.indexOf('人数') >= 0 && rawSeat.indexOf('割振') >= 0) return true;
+  // ★ Claude (2026-06-22): SEAT_PREF_OPTIONS のエリア名（具体席ID未確定）を pending 扱い
+  //   → 座席表の「未設定」レールに表示され、後から特定席にドラッグで割り振れる
+  //   ※「いろり」は単独で実席IDなので除外
+  const AREA_PREF_NAMES = [
+    '奥座敷', '小上がり', 'カウンター', '増築テーブル', '掘りごたつ',
+    '1Fテーブル', '1Fカウンター', '1Fハイカウンター', '2F座卓', '2Fソファー',
+    '1F貸切', '2F貸切'
+  ];
+  if (AREA_PREF_NAMES.indexOf(String(rawSeat).trim()) >= 0) return true;
   return false;
 }
 
@@ -9254,9 +9280,14 @@ function renderUnassignedRail(dayRes) {
     const r = unassigned[i];
     if (r) {
       const courseLabel = reservationDisplayCourseLabel(r);
+      // ★ Claude (2026-06-22): 席希望（エリア名等）があれば表示。これでステップ2で
+      //   「奥座敷」「カウンター」等を選んでも、座席表上で何を希望しているか分かる。
+      const seatHint = (r.seat && r.seat !== '未設定' && r.seat !== '当日決定' && r.seat !== '自動')
+        ? r.seat : '';
       slot.innerHTML = '<strong>' + escHtml(r.time || '') + '</strong>'
         + '<div class="meta">' + escHtml((r.name || '') + '様') + '</div>'
-        + '<div class="meta">' + escHtml((r.people || 0) + '名' + (courseLabel ? '・' + courseLabel : '')) + '</div>';
+        + '<div class="meta">' + escHtml((r.people || 0) + '名' + (courseLabel ? '・' + courseLabel : '')) + '</div>'
+        + (seatHint ? '<div class="meta" style="font-size:10px;color:#1976d2;font-weight:600;">🪑 ' + escHtml(seatHint) + '</div>' : '');
       slot.draggable = true;
       slot.setAttribute('data-rid', r.id);
       slot.addEventListener('dragstart', function(e) {
