@@ -2600,10 +2600,25 @@ function updateUserChip() {
 }
 
 // 一般スタッフは、アプリを開くたびに所属店舗を初期表示にする。
-// 管理者は両店舗を扱うため、選択中の店舗を維持する。
+// 管理者は両店舗を扱うため、選択中の店舗を維持するのが既定だが、
+// ★ Claude (2026-06-22): 特定ユーザー（下村利春）はリボルバードの管理者として動くので、
+//   USER_DEFAULT_STORE_OVERRIDES に名前が登録されていれば管理者でもデフォルト適用する。
 function applyStaffDefaultStore() {
-  if (!currentUser || currentUser.isAdmin) return;
-  const store = currentUser.defaultStore === 'revolverd' ? 'revolverd' : 'torihashi';
+  if (!currentUser) return;
+  // 管理者の場合は override リストに名前があれば適用、なければ現状店舗維持
+  const USER_DEFAULT_STORE_OVERRIDES = {
+    '下村利春': 'revolverd'
+  };
+  const overrideStore = USER_DEFAULT_STORE_OVERRIDES[String(currentUser.name || '').trim()];
+  let store;
+  if (currentUser.isAdmin) {
+    // 管理者は override があればそれ、なければ現状維持（何もしない）
+    if (!overrideStore) return;
+    store = overrideStore;
+  } else {
+    // 一般スタッフは override 優先 → server側の defaultStore → 'torihashi'
+    store = overrideStore || (currentUser.defaultStore === 'revolverd' ? 'revolverd' : 'torihashi');
+  }
   if (store !== currentStore) {
     try { setCurrentStore(store); } catch (e) {}
   }
@@ -5807,7 +5822,8 @@ function switchTab(name) {
   currentTab = name;
   updateHeaderTitle(name);
   document.querySelectorAll('.bottom-nav button').forEach((b, i) => {
-    const tabs = ['seatmap', 'staff', 'list', 'info'];
+    // ★ Claude (2026-06-22): HTML側のボタン並び順「一覧 / 座席表 / バイト管理 / 席情報」と一致させる
+    const tabs = ['list', 'seatmap', 'staff', 'info'];
     b.classList.toggle('active', tabs[i] === name);
   });
   // tab-new は HTML上に残しておく（一覧からのボタンで起動するため）が、下部ナビからは見えない
