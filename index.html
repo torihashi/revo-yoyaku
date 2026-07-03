@@ -5930,6 +5930,13 @@ window.addEventListener('DOMContentLoaded', () => {
   try { _loadProductsFromCache(); } catch (e) {}
   try { loadTakeoutProducts(); } catch (e) {}
 
+  // ★ Claude (2026-06-22): 起動時に自動リトライ（同期失敗して残ってる幽霊予約をGCalへ送信）
+  setTimeout(function() { try { _autoRetryGhostReservations(); } catch (e) {} }, 3000);
+  // オンライン復帰時にも自動リトライ
+  window.addEventListener('online', function() {
+    try { _autoRetryGhostReservations(); } catch (e) {}
+  });
+
   // 当日のシフトも裏でプリロード（シフトレールを高速化）
   if (typeof preloadStaffSchedules === 'function') {
     try { preloadStaffSchedules(); } catch (e) {}
@@ -6446,8 +6453,8 @@ function openGhostCleanupModal() {
 
   html += '<div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:10px;">'
        +    '⚠️ 以下はPWA作成後にGoogleカレンダーへ同期されなかった予約です（' + ghosts.length + '件）。<br>'
-       +    '削除したい予約にチェックを入れて「選択した予約を削除」を押してください。<br>'
-       +    '<span style="color:#c62828;">この操作は取り消せません。</span>'
+       +    '① チェックを入れた予約を <strong style="color:#2e7d32;">「☁️ Googleカレンダーに送信」</strong>で復旧できます（推奨）。<br>'
+       +    '② どうしても不要なら <strong style="color:#c62828;">「🗑 削除」</strong> で消せます。'
        +  '</div>'
        +  '<div style="margin-bottom:8px;">'
        +    '<button type="button" id="ghostSelectAllBtn" style="font-size:11px;padding:4px 10px;border:1px solid var(--border);background:#fff;border-radius:6px;cursor:pointer;font-family:inherit;">全選択</button>'
@@ -6480,9 +6487,13 @@ function openGhostCleanupModal() {
   });
   html += '</div>';
 
-  html += '<div style="display:flex;gap:6px;margin-top:14px;">'
-       +    '<button type="button" class="secondary" id="ghostCloseBtn" style="flex:1;">キャンセル</button>'
-       +    '<button type="button" id="ghostDeleteBtn" style="flex:1;background:#c62828;color:#fff;border:none;padding:10px;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 選択した予約を削除</button>'
+  // ★ Claude (2026-06-22): 削除ではなく「GCalに送信し直す」オプションを主ボタンに
+  html += '<div style="display:flex;flex-direction:column;gap:6px;margin-top:14px;">'
+       +    '<button type="button" id="ghostResendBtn" style="background:#2e7d32;color:#fff;border:none;padding:12px;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;">☁️ 選択した予約を Google カレンダーに送信</button>'
+       +    '<div style="display:flex;gap:6px;">'
+       +      '<button type="button" class="secondary" id="ghostCloseBtn" style="flex:1;">閉じる</button>'
+       +      '<button type="button" id="ghostDeleteBtn" style="flex:1;background:#c62828;color:#fff;border:none;padding:10px;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;">🗑 選択を削除</button>'
+       +    '</div>'
        +  '</div>';
 
   box.innerHTML = html;
@@ -6497,6 +6508,46 @@ function openGhostCleanupModal() {
     box.querySelectorAll('.ghost-chk').forEach(function(c) { c.checked = false; });
   };
   box.querySelector('#ghostCloseBtn').onclick = function() { overlay.remove(); };
+  // ★ Claude (2026-06-22): 「GCalに送信し直す」ボタン。幽霊予約を実際のGCalイベントに昇格。
+  box.querySelector('#ghostResendBtn').onclick = async function() {
+    const checked = Array.from(box.querySelectorAll('.ghost-chk:checked'));
+    if (checked.length === 0) {
+      alert('GCalに送信する予約を選択してください。');
+      return;
+    }
+    if (!isWebhookConfigured()) {
+      alert('Webhook未設定のため送信できません。');
+      return;
+    }
+    const btn = box.querySelector('#ghostResendBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 送信中...';
+    const idsToResend = checked.map(function(c) { return c.getAttribute('data-rid'); });
+    const targets = reservations.filter(function(r) { return idsToResend.indexOf(r.id) >= 0; });
+    let okCount = 0;
+    let failCount = 0;
+    for (const r of targets) {
+      try {
+        const ok = await _resendReservationToGcal(r);
+        if (ok) okCount++;
+        else failCount++;
+      } catch (e) {
+        failCount++;
+      }
+    }
+    try { saveReservations(); } catch (e) {}
+    try {
+      if (typeof logActivity === 'function') {
+        logActivity('☁️ 幽霊予約→GCal送信', okCount + '件成功 / ' + failCount + '件失敗', '');
+      }
+    } catch (e) {}
+    overlay.remove();
+    if (failCount === 0) {
+      alert('✓ ' + okCount + ' 件を Google カレンダーに送信しました。');
+    } else {
+      alert('✓ 成功 ' + okCount + ' 件 / ⚠ 失敗 ' + failCount + ' 件\n\n失敗した予約は次回スキャンで再度表示されます。ネットワーク状況を確認して再試行してください。');
+    }
+  };
   box.querySelector('#ghostDeleteBtn').onclick = function() {
     const checked = Array.from(box.querySelectorAll('.ghost-chk:checked'));
     if (checked.length === 0) {
@@ -6529,6 +6580,150 @@ function openGhostCleanupModal() {
     overlay.remove();
     alert(deletedItems.length + ' 件の予約を削除しました。');
   };
+}
+
+// ★ Claude (2026-06-22): 起動時＆オンライン復帰時の自動リトライ。
+//   `_needsGcalResend: true` または「PWA作成後10分経ってgcalEventIdが無い」予約を対象に
+//   静かに送信し直す。成功したらフラグ解除。失敗はまた次回リトライ。
+async function _autoRetryGhostReservations() {
+  if (!isWebhookConfigured()) return;
+  if (!navigator.onLine) return;
+  const now = Date.now();
+  const GRACE_MS = 10 * 60 * 1000; // 10分以内は同期処理途中の可能性があるので触らない
+  const targets = reservations.filter(function(r) {
+    if (!r || r.status === 'cancelled') return false;
+    // 明示的にリトライ対象マークがあるもの
+    if (r._needsGcalResend) return true;
+    // マークはないが、PWA作成で10分以上経っても gcalEventId が無いもの
+    if (r.source === 'pwa' && !r.gcalEventId && r.createdAt && (now - r.createdAt) > GRACE_MS) {
+      return true;
+    }
+    return false;
+  });
+  if (targets.length === 0) return;
+  console.log('[自動リトライ] ' + targets.length + '件の未同期予約をGCalに送信します');
+  let okCount = 0;
+  for (const r of targets) {
+    try {
+      const ok = await _resendReservationToGcal(r);
+      if (ok) {
+        delete r._needsGcalResend;
+        okCount++;
+      }
+    } catch (e) {}
+    // 連続リクエストで GAS の RateLimit にあたらないよう軽く間隔
+    await new Promise(function(res) { setTimeout(res, 400); });
+  }
+  if (okCount > 0) {
+    try { saveReservations(); } catch (e) {}
+    try {
+      if (typeof updateSyncStatus === 'function') {
+        updateSyncStatus('✓ 未同期の予約 ' + okCount + '件を復旧しました', '#2e7d32');
+        setTimeout(function() { updateSyncStatus(''); }, 4000);
+      }
+      if (typeof logActivity === 'function') {
+        logActivity('☁️ 自動リトライ', okCount + '件をGCal送信', '');
+      }
+    } catch (e) {}
+  }
+}
+
+// ★ Claude (2026-06-22): 幽霊予約を GCal に送信し直すヘルパー。
+//   confirmReservation の GCal作成ロジックと同じフォーマットで description を組立てる。
+//   通常予約とお土産で構造が違うので分岐。成功したら r.gcalEventId をセット。
+async function _resendReservationToGcal(r) {
+  if (!r) return false;
+  try {
+    if (r.type === 'takeout') {
+      const startDate = new Date(r.date + 'T' + r.time + ':00');
+      const endDate = new Date(startDate.getTime() + 15 * 60 * 1000);
+      const title = '🥡 ' + r.name + '様（お土産・' + (r.count || 0) + '点・' + (r.total || 0).toLocaleString() + '円）';
+      const itemLines = (r.entries || []).map(function(e) {
+        return '- ' + e.name + (e.option ? '（' + e.option + '）' : '')
+          + (e.memo ? ' 【' + e.memo + '】' : '')
+          + ' ×' + e.qty + ' = ' + (e.price * e.qty).toLocaleString() + '円';
+      });
+      const desc = [
+        '予約ID: ' + r.id,
+        '受取日時: ' + r.date + ' ' + r.time,
+        'お名前: ' + r.name + '様',
+        '電話: ' + (r.phone || ''),
+        '点数: ' + (r.count || 0) + '点',
+        '合計: ' + (r.total || 0).toLocaleString() + '円',
+        '受付: PWA直接（お土産）※再送信',
+        '備考: ' + (r.notes || 'なし'),
+        '',
+        '【商品内訳】',
+        itemLines.join('\n')
+      ].join('\n');
+      const resp = await callWebhook({
+        action: 'create-takeout',
+        store: r.store || 'torihashi',
+        title: title,
+        description: desc,
+        start: startDate.toISOString(),
+        end: endDate.toISOString(),
+        colorId: '6'
+      });
+      if (resp && resp.ok && resp.eventId) {
+        r.gcalEventId = resp.eventId;
+        return true;
+      }
+      return false;
+    }
+    // 通常予約
+    const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    let courseText = '';
+    if (course) {
+      const isSeatOnly = (course.id === 'S' || course.id === 'RS');
+      if (!isSeatOnly) {
+        if (course.price > 0) {
+          const isDrink = (course.id === 'C' || course.id === 'D' || course.id === 'E');
+          courseText = course.price + '円' + (isDrink ? '飲み放題' : '') + '、';
+        } else {
+          courseText = course.name + '、';
+        }
+      }
+    }
+    const title = courseText + (r.people || 0) + '名、' + r.name + '様、' + (r.seat || '未設定');
+    const startDate = new Date(r.date + 'T' + r.time + ':00+09:00');
+    const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
+    const kI = parseInt(r.kidInfant, 10) || 0;
+    const kE = parseInt(r.kidElementary, 10) || 0;
+    const adult = Math.max(0, (r.people || 0) - kI - kE);
+    const peopleHistoryLine = (Array.isArray(r.peopleHistory) && r.peopleHistory.length > 1)
+      ? '人数履歴: ' + r.peopleHistory.join('→')
+      : null;
+    const desc = [
+      '予約ID: ' + r.id,
+      'ステータス: ' + (r.status === 'cancelled' ? '取消' : '確定'),
+      '人数: ' + (r.people || 0) + '名（中学生以上 ' + adult + ' / 小学生 ' + kE + ' / 幼児 ' + kI + '）',
+      ...(peopleHistoryLine ? [peopleHistoryLine] : []),
+      '名前: ' + (r.name || ''),
+      'コース: ' + (course ? course.name : '席だけ'),
+      '席: ' + (r.seat || '未設定'),
+      '電話: ' + (r.phone || ''),
+      '受付: PWA直接 ※再送信',
+      '特記: ' + (r.notes || 'なし')
+    ].join('\n');
+    const resp = await callWebhook({
+      action: 'create',
+      store: r.store || 'torihashi',
+      title: title,
+      description: desc,
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+      colorId: r.status === 'confirmed' ? '10' : '5'
+    });
+    if (resp && resp.ok && resp.eventId) {
+      r.gcalEventId = resp.eventId;
+      return true;
+    }
+    return false;
+  } catch (e) {
+    console.error('_resendReservationToGcal failed:', e);
+    return false;
+  }
 }
 
 // ★ Claude (2026-06-21): 席選択モーダル。
@@ -7118,9 +7313,19 @@ function submitReservation() {
         updateSyncStatus('✓ 同期OK', '#2e7d32');
         setTimeout(function() { updateSyncStatus(''); }, 3000);
       } else {
-        updateSyncStatus('⚠ 同期失敗（端末内に保存）', '#c62828');
-        setTimeout(function() { updateSyncStatus(''); }, 5000);
+        // ★ Claude (2026-06-22): 失敗時は目立つメッセージ＋自動リトライ対象としてマーク
+        //   起動時 or アプリ復帰時に幽霊予約を検出して自動でGCal送信を試みる。
+        data._needsGcalResend = true;
+        saveReservations();
+        updateSyncStatus('⚠ 同期失敗：後で自動リトライします', '#c62828');
+        setTimeout(function() { updateSyncStatus(''); }, 6000);
       }
+    }).catch(function(err) {
+      // 通信例外も同様にリトライフラグ
+      data._needsGcalResend = true;
+      saveReservations();
+      updateSyncStatus('⚠ 通信エラー：後で自動リトライします', '#c62828');
+      setTimeout(function() { updateSyncStatus(''); }, 6000);
     });
   }
 
