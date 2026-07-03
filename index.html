@@ -910,75 +910,91 @@ button.secondary:active { background: var(--primary); color: white; }
   border-color: #e57373;
 }
 /* 月間スタッフカレンダー */
+/* ★ Claude (2026-06-22): 一覧/座席表タブの events-mode カレンダー と統一UI化。
+   .staff-month-grid の見た目を .cal-grid-wrap[data-mode="events"] .cal-grid に近づける。 */
 .staff-month-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 1px;
-  background: #f0f0f0;
+  gap: 3px;
+  background: transparent;
   border: 0;
-  border-radius: 2px;
   overflow: hidden;
-  margin-left: -16px;
-  margin-right: -16px;
+  margin-top: 8px;
 }
 .staff-month-grid .smc-dow {
-  background: #f5f5f5;
+  background: transparent;
   text-align: center;
-  padding: 3px 0;
-  font-size: 10px;
+  padding: 4px 0;
+  font-size: 11px;
   font-weight: 700;
   color: var(--muted);
 }
 .staff-month-grid .smc-dow.sun { color: #c62828; }
-.staff-month-grid .smc-dow.sat { color: #1565c0; }
+.staff-month-grid .smc-dow.sat { color: #1976d2; }
 .staff-month-grid .smc-day {
-  background: white;
-  min-height: 112px;
-  padding: 2px 1px 3px;
-  font-size: 10px;
+  background: #fafafa;
+  border: 1px solid #eee;
+  border-radius: 5px;
+  min-height: 88px;
+  padding: 3px 3px 4px;
+  font-size: 11px;
   line-height: 1.15;
   overflow: hidden;
   position: relative;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
 }
 .staff-month-grid .smc-day.selected {
-  outline: 2px solid var(--primary);
-  outline-offset: -2px;
-  background: #fafffa;
+  background: #fff3e0 !important;
+  border-color: #ff9800 !important;
+  box-shadow: 0 0 0 1.5px #ff9800 inset;
 }
-.staff-month-grid .smc-day.blank { background: #fafafa; }
+.staff-month-grid .smc-day.blank {
+  background: #fcfcfc;
+  border-color: #f0f0f0;
+  cursor: default;
+}
 .staff-month-grid .smc-day .smc-num {
-  font-weight: 700;
   font-size: 11px;
-  color: var(--text);
-  display: inline-block;
-  margin: 0 0 2px 1px;
+  line-height: 1;
+  margin-bottom: 2px;
+  padding-left: 2px;
+  color: inherit;
+  font-weight: 600;
+  text-align: left;
+}
+.staff-month-grid .smc-day.today {
+  background: #fff;
+  border-color: transparent;
 }
 .staff-month-grid .smc-day.today .smc-num {
-  background: var(--primary);
-  color: white;
-  border-radius: 50%;
-  width: 18px;
-  height: 18px;
-  line-height: 18px;
-  padding: 0;
-  text-align: center;
   display: inline-block;
+  background: #d32f2f;
+  color: #fff;
+  width: 18px; height: 18px; line-height: 18px;
+  border-radius: 50%;
+  text-align: center;
+  font-weight: 700;
+  margin-bottom: 3px;
 }
 .staff-month-grid .smc-day.sun .smc-num { color: #c62828; }
-.staff-month-grid .smc-day.sat .smc-num { color: #1565c0; }
+.staff-month-grid .smc-day.sat .smc-num { color: #1976d2; }
 .staff-month-grid .smc-day .smc-work {
   display: block;
-  color: #087a45;
-  background: #dff7ec;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 3px;
-  border-radius: 2px;
-  margin-bottom: 2px;
+  font-size: 9.5px;
+  line-height: 1.15;
+  padding: 1.5px 4px;
+  border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: #1b5e20;
+  background: #c8e6c9;
+  margin-bottom: 1.5px;
 }
 .staff-month-detail {
   margin-top: 8px;
@@ -1064,46 +1080,74 @@ button.secondary:active { background: var(--primary); color: white; }
 }
 .staff-month-grid .smc-day .smc-unav {
   display: block;
-  color: #c62828;
-  background: #ffebee;
-  font-weight: 700;
-  font-size: 10px;
-  padding: 2px 3px;
-  border-radius: 2px;
-  margin-bottom: 2px;
+  font-size: 9.5px;
+  line-height: 1.15;
+  padding: 1.5px 4px;
+  border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: #b71c1c;
+  background: #ffcdd2;
+  margin-bottom: 1.5px;
 }
 .staff-month-grid .smc-day .smc-kou {
   display: block;
-  color: #0288d1;       /* 水色 */
-  background: #e1f5fe;
-  font-weight: 700;
-  font-size: 10px;
-  padding: 2px 3px;
-  border-radius: 2px;
-  margin-bottom: 2px;
+  font-size: 9.5px;
+  line-height: 1.15;
+  padding: 1.5px 4px;
+  border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: #01579b;
+  background: #b3e5fc;
+  margin-bottom: 1.5px;
 }
 /* 営業カレンダーから取込んだ店舗の休業日（バナー） */
 .staff-month-grid .smc-day .smc-biz-holiday {
   display: block;
-  background: #c8201d;
-  color: white;
+  font-size: 9px;
+  line-height: 1.1;
+  padding: 1.5px 0;
+  border-radius: 3px;
+  text-align: center;
   font-weight: 700;
-  font-size: 10px;
-  padding: 2px 3px;
-  border-radius: 2px;
+  color: #fff;
+  background: #ef9a9a;
   margin-bottom: 2px;
+}
+.staff-month-grid .smc-day.biz-holiday {
+  background: #fff5f5;
+}
+/* ★ Claude (2026-06-22): 予約情報 ON時のチップ（events-modeカレンダーと配色統一） */
+.staff-month-grid .smc-day .smc-res {
+  display: block;
+  font-size: 9.5px;
+  line-height: 1.15;
+  padding: 1.5px 4px;
+  border-radius: 3px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: #1b5e20;
+  background: #c8e6c9;
+  margin-bottom: 1.5px;
 }
-.staff-month-grid .smc-day.biz-holiday {
-  background: #ffebee;
+.staff-month-grid .smc-day .smc-res.src-yahoo {
+  background: #ffcdd2; color: #b71c1c;
+}
+.staff-month-grid .smc-day .smc-res.src-autoreserve {
+  background: #bbdefb; color: #0d47a1;
+}
+.staff-month-grid .smc-day .smc-res.takeout {
+  background: #ffe0b2; color: #e65100;
+}
+.staff-month-grid .smc-day .smc-res.more {
+  background: #f5f5f5; color: #666; text-align: center;
 }
 
 /* シフト追加モーダルの選択日チップ */
@@ -1634,14 +1678,26 @@ select.time-select option:disabled { color: #aaa; }
 
 .hidden { display: none; }
 
+/* ★ Claude (2026-06-22): 小型iPhone等でモーダル内容が画面より大きい時、
+   下部の確定ボタンが押せない問題を修正。
+   - overlay 自体をスクロール可能にし、center揃えを止めて flex-start に。
+   - モーダル本体にも max-height + overflow-y を保険で付ける。
+   - iOS Safari の慣性スクロールを有効化（-webkit-overflow-scrolling: touch）。 */
 .modal-overlay {
   position: fixed; inset: 0; background: rgba(0,0,0,.5);
-  display: flex; align-items: center; justify-content: center;
+  display: flex; align-items: flex-start; justify-content: center;
   z-index: 200; padding: 16px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 .modal {
   background: var(--card); border-radius: 16px; padding: 24px;
   max-width: 400px; width: 100%;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  /* 上下に少しマージンを取って中央寄りに見せる */
+  margin: auto 0;
 }
 .modal h3 { margin: 0 0 12px; color: var(--primary-dark); }
 .success-icon {
@@ -2039,7 +2095,11 @@ select.time-select option:disabled { color: #aaa; }
 <!-- ============================================ -->
 <section id="tab-staff" class="hidden">
   <div class="card">
-    <button class="primary" style="margin-top:0;margin-bottom:10px;" onclick="openStaffShiftModal()">＋ シフト追加（複数日対応）</button>
+    <!-- ★ Claude (2026-06-22): シフト追加ボタン隣に「予約情報を重ねる」トグル追加 -->
+    <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:10px;">
+      <button class="primary" style="flex:1;margin:0;" onclick="openStaffShiftModal()">＋ シフト追加（複数日対応）</button>
+      <button type="button" id="staffShowResBtn" class="secondary" onclick="toggleStaffShowReservations()" style="flex-shrink:0;margin:0;padding:14px 12px;width:auto;font-size:12px;">📋 予約表示 OFF</button>
+    </div>
 
     <!-- 月間カレンダー（出勤・休みを日ごとに俯瞰） -->
     <div class="staff-month-section" style="margin-top:14px;">
@@ -3126,6 +3186,24 @@ function changeStaffMonthCal(delta) {
   renderStaffMonthCal();
 }
 
+// ★ Claude (2026-06-22): 予約情報表示のON/OFF切替
+let _staffShowReservations = false;
+function toggleStaffShowReservations() {
+  _staffShowReservations = !_staffShowReservations;
+  const btn = document.getElementById('staffShowResBtn');
+  if (btn) {
+    btn.textContent = '📋 予約表示 ' + (_staffShowReservations ? 'ON' : 'OFF');
+    btn.style.background = _staffShowReservations ? 'var(--primary)' : '';
+    btn.style.color = _staffShowReservations ? '#fff' : '';
+    btn.style.borderColor = _staffShowReservations ? 'var(--primary)' : '';
+  }
+  // 即時再描画
+  const key = _monthCalKey();
+  if (_staffMonthCalCache[key]) {
+    try { _drawStaffMonthCal(_staffMonthCalCache[key].byDate); } catch (e) {}
+  }
+}
+
 function renderStaffMonthCal() {
   const grid = document.getElementById('staffMonthCalGrid');
   const label = document.getElementById('staffMonthCalLabel');
@@ -3148,12 +3226,14 @@ function renderStaffMonthCal() {
   const storeLabel = document.getElementById('staffMonthCalStoreLabel');
   if (storeLabel) storeLabel.textContent = currentStore === 'revolverd' ? '【🥃 リボ・バイト】' : '【🐔 鳥はし・バイト】';
 
-  // ★ キャッシュがあれば即時表示（待ち時間ゼロ）
+  // ★ Claude (2026-06-22): 空グリッドを即描画してから、非同期でデータを埋める（体感速度改善）
+  //   キャッシュがあれば byDate 付きで即時描画、なければ空グリッドを即時描画。
   const key = _monthCalKey();
   if (_staffMonthCalCache[key]) {
     try { _drawStaffMonthCal(_staffMonthCalCache[key].byDate); } catch (e) {}
   } else {
-    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--muted);">読み込み中...</div>';
+    // 空データで即座に骨組み描画（読み込み中の空白時間を消す）
+    try { _drawStaffMonthCal({}); } catch (e) {}
   }
 
   if (!isWebhookConfigured()) {
@@ -3208,6 +3288,21 @@ function _drawStaffMonthCal(byDate) {
     });
   } catch (e) {}
 
+  // ★ Claude (2026-06-22): 予約情報 ON の時は当月の予約を日付ごとに集計
+  const resByDate = {};
+  if (_staffShowReservations && typeof reservations !== 'undefined' && Array.isArray(reservations)) {
+    const monthPrefix = y + '-' + String(m + 1).padStart(2, '0') + '-';
+    reservations.forEach(function(r) {
+      if (!r || !r.date || !r.date.startsWith(monthPrefix)) return;
+      if ((r.store || 'torihashi') !== currentStore) return;
+      if (r.status === 'cancelled') return;
+      (resByDate[r.date] = resByDate[r.date] || []).push(r);
+    });
+    Object.keys(resByDate).forEach(function(dk) {
+      resByDate[dk].sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
+    });
+  }
+
   let html = '';
   // 曜日ヘッダ
   ['日','月','火','水','木','金','土'].forEach(function(d, i) {
@@ -3257,6 +3352,26 @@ function _drawStaffMonthCal(byDate) {
       inner += '<span class="smc-work" title="出勤：' + escHtml(it.name) + '">'
             + escHtml(getStaffDisplayName(it.name)) + '</span>';
     });
+    // ★ Claude (2026-06-22): 予約情報 ON なら予約チップを重ねる
+    if (_staffShowReservations) {
+      const dayResList = resByDate[dateStr] || [];
+      const maxRes = 3; // シフトと予約が両立するので予約は3件までに制限
+      const shownRes = dayResList.slice(0, maxRes);
+      const hiddenRes = dayResList.length - shownRes.length;
+      shownRes.forEach(function(r) {
+        let chipCls = 'smc-res';
+        if (r.type === 'takeout')          chipCls += ' takeout';
+        else if (r.source === 'yahoo')     chipCls += ' src-yahoo';
+        else if (r.source === 'autoreserve') chipCls += ' src-autoreserve';
+        const tm = (r.time || '').replace(/^0/, '');
+        const label = (r.type === 'takeout' ? '🥡' : tm) + ' ' + (r.name || '');
+        inner += '<span class="' + chipCls + '" title="' + escHtml((r.time || '') + ' ' + (r.name || '') + '様 ' + (r.people ? r.people + '名' : '')) + '">'
+              + escHtml(label) + '</span>';
+      });
+      if (hiddenRes > 0) {
+        inner += '<span class="smc-res more">+' + hiddenRes + '件</span>';
+      }
+    }
     html += '<div class="' + cls + '" data-date="' + dateStr + '">' + inner + '</div>';
   }
   grid.innerHTML = html;
