@@ -3202,6 +3202,10 @@ function toggleStaffShowReservations() {
   if (_staffMonthCalCache[key]) {
     try { _drawStaffMonthCal(_staffMonthCalCache[key].byDate); } catch (e) {}
   }
+  // ★ Claude (2026-06-22): 日別詳細も再描画（選択日があれば）
+  if (_staffMonthCalState.selectedDate) {
+    try { renderStaffMonthDayDetail(_staffMonthCalState.selectedDate); } catch (e) {}
+  }
 }
 
 function renderStaffMonthCal() {
@@ -3565,7 +3569,69 @@ function renderStaffMonthDayDetail(dateStr) {
         }, parsed.employee);
       });
     });
+
+    // ★ Claude (2026-06-22): 予約表示 ON なら、シフト一覧の下に「予約」セクションも追加（読み取り専用）
+    if (_staffShowReservations) {
+      _appendStaffDayReservations(body, dateStr);
+    }
   });
+}
+
+// ★ Claude (2026-06-22): 日別詳細に予約情報を追加する読み取り専用セクション
+function _appendStaffDayReservations(body, dateStr) {
+  if (!body || typeof reservations === 'undefined' || !Array.isArray(reservations)) return;
+  const list = reservations.filter(function(r) {
+    return r
+        && r.date === dateStr
+        && (r.store || 'torihashi') === currentStore
+        && r.status !== 'cancelled';
+  }).sort(function(a, b) {
+    // お土産は末尾に、その他は時刻昇順
+    const at = a.type === 'takeout' ? 1 : 0;
+    const bt = b.type === 'takeout' ? 1 : 0;
+    if (at !== bt) return at - bt;
+    return (a.time || '').localeCompare(b.time || '');
+  });
+
+  const section = document.createElement('div');
+  section.style.cssText = 'margin-top:6px;border-top:1px dashed var(--border);padding-top:8px;';
+  section.innerHTML = '<div style="font-size:12px;font-weight:700;color:var(--primary-dark);margin-bottom:6px;">📋 この日の予約（' + list.length + '件）</div>';
+
+  if (list.length === 0) {
+    section.innerHTML += '<div class="smd-empty" style="padding:6px;">予約はありません</div>';
+    body.appendChild(section);
+    return;
+  }
+
+  list.forEach(function(r) {
+    const isTakeout = r.type === 'takeout';
+    const badgeCls = isTakeout ? 'takeout' : (r.source === 'yahoo' ? 'yahoo' : r.source === 'autoreserve' ? 'autoreserve' : 'pwa');
+    const badgeStyle = isTakeout
+      ? 'background:#ffe0b2;color:#e65100;'
+      : r.source === 'yahoo' ? 'background:#ffcdd2;color:#b71c1c;'
+      : r.source === 'autoreserve' ? 'background:#bbdefb;color:#0d47a1;'
+      : 'background:#c8e6c9;color:#1b5e20;';
+    const badgeLabel = isTakeout ? '🥡お土産' : (r.source === 'yahoo' ? 'Yahoo' : r.source === 'autoreserve' ? 'AR' : 'PWA');
+    const detailLine = isTakeout
+      ? (r.count || 0) + '点・' + (r.total || 0).toLocaleString() + '円'
+      : (r.people || 0) + '名' + (r.seat ? '・席:' + r.seat : '');
+
+    const row = document.createElement('div');
+    row.className = 'smd-item';
+    row.style.cursor = 'default';
+    row.innerHTML =
+      '<span class="smd-time">' + escHtml(r.time || '--:--') + '</span>'
+      + '<span class="smd-name" style="text-decoration:none;">' + escHtml((r.name || '不明') + '様') + '</span>'
+      + '<span class="smd-type" style="' + badgeStyle + '">' + badgeLabel + '</span>';
+    section.appendChild(row);
+    // 詳細行（人数/席/コース or 点数/合計）
+    const detail = document.createElement('div');
+    detail.style.cssText = 'padding:0 0 6px 64px;font-size:11px;color:var(--muted);';
+    detail.textContent = detailLine;
+    section.appendChild(detail);
+  });
+
+  body.appendChild(section);
 }
 
 function openStaffShiftEditModal(item, originalDate) {
