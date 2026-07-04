@@ -5523,9 +5523,36 @@ function refreshAvailabilityForStoreChange() {
   }
 }
 
-// 現在の店舗の席マスタを返す
+// ★ Claude (2026-06-22): 席マスタの人数上書き（管理者が席情報タブで編集）
+//   保存: localStorage 'seat_master_overrides_v1'
+//   構造: { torihashi: { '31': {min:2, max:12}, ... }, revolverd: {...} }
+const SEAT_MASTER_OVERRIDES_KEY = 'seat_master_overrides_v1';
+function _loadSeatMasterOverrides() {
+  try {
+    const raw = localStorage.getItem(SEAT_MASTER_OVERRIDES_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch (e) { return {}; }
+}
+function _saveSeatMasterOverrides(all) {
+  try { localStorage.setItem(SEAT_MASTER_OVERRIDES_KEY, JSON.stringify(all)); } catch (e) {}
+}
+
+// 現在の店舗の席マスタを返す（overrideを上乗せ）
 function getSeatMaster() {
-  return currentStore === 'revolverd' ? REVO_SEAT_MASTER : SEAT_MASTER;
+  const base = currentStore === 'revolverd' ? REVO_SEAT_MASTER : SEAT_MASTER;
+  const all = _loadSeatMasterOverrides();
+  const overrides = (all[currentStore] || {});
+  return base.map(function(s) {
+    const ov = overrides[s.id];
+    if (!ov) return s;
+    // 上書き適用（min, max のみ・note に「※編集済」を付与して分かるように）
+    return Object.assign({}, s, {
+      min: (ov.min != null) ? ov.min : s.min,
+      max: (ov.max != null) ? ov.max : s.max,
+      note: s.note ? (s.note + '（※編集済）') : '※編集済',
+      _edited: true
+    });
+  });
 }
 function getCombinations() {
   return currentStore === 'revolverd' ? REVO_COMBINATIONS : COMBINATIONS;
@@ -10408,17 +10435,133 @@ function renderSeatMaster() {
     if (!grouped[s.area]) grouped[s.area] = [];
     grouped[s.area].push(s);
   });
-  div.innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">店舗：<strong>' + getStoreLabel() + '</strong></div>'
+  // ★ Claude (2026-06-22): 管理者なら各行に編集ボタン
+  const isAdmin = !!(currentUser && currentUser.isAdmin);
+  div.innerHTML = '<div style="font-size:12px;color:var(--muted);margin-bottom:8px">店舗：<strong>' + getStoreLabel() + '</strong>'
+    + (isAdmin ? ' <span style="font-size:10px;color:var(--primary);">（管理者：✏️で人数変更可）</span>' : '')
+    + '</div>'
     + Object.entries(grouped).map(([area, tables]) => `
     <div style="margin-bottom:12px">
       <div style="font-weight:700;color:var(--primary-dark);margin-bottom:6px">${area}</div>
-      ${tables.map(t => `
-        <div style="padding:8px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:4px; font-size:13px;">
-          <strong>${t.id}</strong>（${t.type}）${t.min}〜${t.max}名 — ${t.note}
+      ${tables.map(t => {
+        const editedMark = t._edited ? '<span style="color:#ef6c00;font-weight:700;">●</span> ' : '';
+        const editBtn = isAdmin
+          ? `<button type="button" onclick="openSeatMasterEditModal('${escapeAttr(t.id)}')" style="margin-left:8px;padding:3px 9px;font-size:11px;border:1px solid var(--primary);background:#fff;color:var(--primary-dark);border-radius:5px;cursor:pointer;font-family:inherit;flex-shrink:0;">✏️ 編集</button>`
+          : '';
+        return `
+        <div style="padding:8px 10px; background:var(--primary-light); border-radius:6px; margin-bottom:4px; font-size:13px;display:flex;align-items:center;gap:6px;">
+          <div style="flex:1;min-width:0;">
+            ${editedMark}<strong>${t.id}</strong>（${t.type}）<strong style="color:#c62828;">${t.min}〜${t.max}名</strong> — ${t.note}
+          </div>
+          ${editBtn}
         </div>
-      `).join('')}
+      `;
+      }).join('')}
     </div>
   `).join('');
+}
+
+// ★ Claude (2026-06-22): 席人数の編集モーダル。管理者専用。
+function openSeatMasterEditModal(seatId) {
+  if (!currentUser || !currentUser.isAdmin) {
+    alert('席人数の変更は管理者のみが実行できます。');
+    return;
+  }
+  const base = (currentStore === 'revolverd' ? REVO_SEAT_MASTER : SEAT_MASTER).find(function(s) { return s.id === seatId; });
+  if (!base) { alert('席が見つかりません: ' + seatId); return; }
+  const all = _loadSeatMasterOverrides();
+  const current = (all[currentStore] || {})[seatId] || {};
+  const curMin = current.min != null ? current.min : base.min;
+  const curMax = current.max != null ? current.max : base.max;
+  const isEdited = (current.min != null || current.max != null);
+
+  const existing = document.getElementById('seatMasterEditOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'seatMasterEditOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.maxWidth = '360px';
+  box.innerHTML =
+    '<h3 style="margin-top:0;">✏️ 席の人数を編集</h3>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">'
+    +   '<strong>' + escapeAttr(base.id) + '</strong>（' + escapeAttr(base.area) + '・' + escapeAttr(base.type) + '）<br>'
+    +   '初期値: ' + base.min + '〜' + base.max + '名 ／ ' + escapeAttr(base.note || '')
+    +   (isEdited ? '<br><span style="color:#ef6c00;font-weight:700;">現在: 編集済み</span>' : '')
+    + '</div>'
+    + '<div class="row" style="margin-bottom:12px;">'
+    +   '<div class="field" style="margin-bottom:0;">'
+    +     '<label style="font-size:11px;">最小人数</label>'
+    +     '<input type="number" id="seatEditMin" value="' + curMin + '" min="1" max="99" inputmode="numeric" />'
+    +   '</div>'
+    +   '<div class="field" style="margin-bottom:0;">'
+    +     '<label style="font-size:11px;">最大人数</label>'
+    +     '<input type="number" id="seatEditMax" value="' + curMax + '" min="1" max="99" inputmode="numeric" />'
+    +   '</div>'
+    + '</div>'
+    + '<div style="display:flex;flex-direction:column;gap:6px;">'
+    +   '<button type="button" id="seatEditSave" class="primary" style="margin:0;">💾 保存</button>'
+    +   (isEdited
+        ? '<button type="button" id="seatEditReset" class="secondary" style="margin:0;background:#fff8e1;border-color:#ffb300;color:#e65100;">↺ 初期値に戻す</button>'
+        : '')
+    +   '<button type="button" id="seatEditCancel" class="secondary" style="margin:0;">やめる</button>'
+    + '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  box.querySelector('#seatEditCancel').onclick = function() { overlay.remove(); };
+  box.querySelector('#seatEditSave').onclick = function() {
+    const newMin = parseInt(box.querySelector('#seatEditMin').value, 10);
+    const newMax = parseInt(box.querySelector('#seatEditMax').value, 10);
+    if (isNaN(newMin) || isNaN(newMax) || newMin < 1 || newMax < 1) {
+      alert('人数は1以上の整数で入力してください。'); return;
+    }
+    if (newMin > newMax) {
+      alert('最小人数は最大人数以下にしてください。'); return;
+    }
+    const all = _loadSeatMasterOverrides();
+    if (!all[currentStore]) all[currentStore] = {};
+    // 初期値と同じなら override 削除、違うなら保存
+    if (newMin === base.min && newMax === base.max) {
+      delete all[currentStore][seatId];
+    } else {
+      all[currentStore][seatId] = { min: newMin, max: newMax };
+    }
+    _saveSeatMasterOverrides(all);
+    try {
+      if (typeof logActivity === 'function') {
+        logActivity('🪑 席人数変更', seatId, base.min + '〜' + base.max + ' → ' + newMin + '〜' + newMax + '名');
+      }
+    } catch (e) {}
+    overlay.remove();
+    renderSeatMaster();
+    // 座席表・新規予約の候補計算に反映されるよう関連ビューを再描画
+    try { if (typeof rerenderSeatPref === 'function') rerenderSeatPref(); } catch (e) {}
+    try { if (typeof renderSeatMap === 'function') renderSeatMap(); } catch (e) {}
+    alert('✓ ' + seatId + ' の人数を「' + newMin + '〜' + newMax + '名」に変更しました。');
+  };
+  const resetBtn = box.querySelector('#seatEditReset');
+  if (resetBtn) {
+    resetBtn.onclick = function() {
+      if (!confirm(seatId + ' の人数を初期値「' + base.min + '〜' + base.max + '名」に戻します。よろしいですか？')) return;
+      const all = _loadSeatMasterOverrides();
+      if (all[currentStore]) delete all[currentStore][seatId];
+      _saveSeatMasterOverrides(all);
+      try {
+        if (typeof logActivity === 'function') {
+          logActivity('🪑 席人数リセット', seatId, '初期値に復元');
+        }
+      } catch (e) {}
+      overlay.remove();
+      renderSeatMaster();
+      try { if (typeof rerenderSeatPref === 'function') rerenderSeatPref(); } catch (e) {}
+      try { if (typeof renderSeatMap === 'function') renderSeatMap(); } catch (e) {}
+      alert('✓ 初期値に戻しました。');
+    };
+  }
 }
 
 function renderCombinations() {
