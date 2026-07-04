@@ -5554,8 +5554,48 @@ function getSeatMaster() {
     });
   });
 }
+// ★ Claude (2026-06-22): 結合パターンの人数上書き（管理者が席情報タブで編集）
+//   保存: localStorage 'combinations_overrides_v1'
+//   構造: { torihashi: { 'P-09': {min:6, max:11}, ... }, revolverd: {...} }
+const COMBINATIONS_OVERRIDES_KEY = 'combinations_overrides_v1';
+function _loadCombinationsOverrides() {
+  try {
+    const raw = localStorage.getItem(COMBINATIONS_OVERRIDES_KEY);
+    return raw ? (JSON.parse(raw) || {}) : {};
+  } catch (e) { return {}; }
+}
+function _saveCombinationsOverrides(all) {
+  try { localStorage.setItem(COMBINATIONS_OVERRIDES_KEY, JSON.stringify(all)); } catch (e) {}
+}
+
 function getCombinations() {
-  return currentStore === 'revolverd' ? REVO_COMBINATIONS : COMBINATIONS;
+  const base = currentStore === 'revolverd' ? REVO_COMBINATIONS : COMBINATIONS;
+  const all = _loadCombinationsOverrides();
+  const overrides = (all[currentStore] || {});
+  return base.map(function(c) {
+    const ov = overrides[c.id];
+    if (!ov) return c;
+    return Object.assign({}, c, {
+      min: (ov.min != null) ? ov.min : c.min,
+      max: (ov.max != null) ? ov.max : c.max,
+      note: c.note ? (c.note + '（※編集済）') : '※編集済',
+      _edited: true
+    });
+  });
+}
+
+// ★ Claude (2026-06-22): 席文字列（"9+10"等）から編集後の最大人数を取得
+//   ハードコードの getSeatCapacity よりも先にこれをチェックする
+function _lookupCombinationCapacity(tablesStr) {
+  const all = _loadCombinationsOverrides();
+  const list = currentStore === 'revolverd' ? REVO_COMBINATIONS : COMBINATIONS;
+  // "9+10" のような tables 文字列で完全一致する combination を探す
+  const combo = list.find(function(c) { return c.tables === tablesStr; });
+  if (!combo) return null;
+  const overrides = (all[currentStore] || {});
+  const ov = overrides[combo.id];
+  if (!ov) return null;
+  return (ov.max != null) ? ov.max : null;
 }
 function getCourses() {
   return currentStore === 'revolverd' ? REVO_COURSES : COURSES;
@@ -7560,6 +7600,10 @@ function getSeatCapacity(rawSeat) {
     });
     return total;
   }
+
+  // ★ Claude (2026-06-22): まず結合パターンの override をチェック（席情報タブで編集した値を優先）
+  const ovMax = _lookupCombinationCapacity(s);
+  if (ovMax != null) return ovMax;
 
   // 結合プリセット（合計より詰めて多人数可）
   if (s === '1+2' || s === '3+4' || s === '5+6') return 8;
@@ -10567,12 +10611,128 @@ function openSeatMasterEditModal(seatId) {
 function renderCombinations() {
   const div = document.getElementById('combinationDisplay');
   if (!div) return;
-  div.innerHTML = getCombinations().map(c => `
-    <div style="padding:8px; border-bottom:1px solid var(--border); font-size:13px;">
-      <strong>${c.id}</strong> [${c.area}] <span style="color:var(--primary-dark)">${c.tables}</span>
-      → ${c.min}〜${c.max}名 ／ ${c.note}
+  // ★ Claude (2026-06-22): 管理者なら各行に編集ボタン。編集済みは ● マーク
+  const isAdmin = !!(currentUser && currentUser.isAdmin);
+  div.innerHTML = getCombinations().map(c => {
+    const editedMark = c._edited ? '<span style="color:#ef6c00;font-weight:700;">●</span> ' : '';
+    const editBtn = isAdmin
+      ? `<button type="button" onclick="openCombinationEditModal('${escapeAttr(c.id)}')" style="margin-left:8px;padding:3px 9px;font-size:11px;border:1px solid var(--primary);background:#fff;color:var(--primary-dark);border-radius:5px;cursor:pointer;font-family:inherit;flex-shrink:0;">✏️ 編集</button>`
+      : '';
+    return `
+    <div style="padding:8px; border-bottom:1px solid var(--border); font-size:13px;display:flex;align-items:center;gap:6px;">
+      <div style="flex:1;min-width:0;">
+        ${editedMark}<strong>${c.id}</strong> [${c.area}] <span style="color:var(--primary-dark)">${c.tables}</span>
+        → <strong style="color:#c62828;">${c.min}〜${c.max}名</strong> ／ ${c.note}
+      </div>
+      ${editBtn}
     </div>
-  `).join('');
+  `;
+  }).join('');
+}
+
+// ★ Claude (2026-06-22): 結合パターン編集モーダル。管理者専用。
+//   例: 「9+10」の max を 10 → 11 に変更すると、getSeatCapacity('9+10') も 11 を返すようになり、
+//        11名予約が「9+10 で収容OK」と判定される。
+function openCombinationEditModal(comboId) {
+  if (!currentUser || !currentUser.isAdmin) {
+    alert('結合パターンの変更は管理者のみが実行できます。');
+    return;
+  }
+  const baseList = currentStore === 'revolverd' ? REVO_COMBINATIONS : COMBINATIONS;
+  const base = baseList.find(function(c) { return c.id === comboId; });
+  if (!base) { alert('結合パターンが見つかりません: ' + comboId); return; }
+  const all = _loadCombinationsOverrides();
+  const current = (all[currentStore] || {})[comboId] || {};
+  const curMin = current.min != null ? current.min : base.min;
+  const curMax = current.max != null ? current.max : base.max;
+  const isEdited = (current.min != null || current.max != null);
+
+  const existing = document.getElementById('comboEditOverlay');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'comboEditOverlay';
+  overlay.className = 'modal-overlay';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const box = document.createElement('div');
+  box.className = 'modal';
+  box.style.maxWidth = '380px';
+  box.innerHTML =
+    '<h3 style="margin-top:0;">✏️ 結合パターンを編集</h3>'
+    + '<div style="font-size:12px;color:var(--muted);margin-bottom:12px;line-height:1.6;">'
+    +   '<strong>' + escapeAttr(base.id) + '</strong>（' + escapeAttr(base.area) + '）<br>'
+    +   '席構成: <strong style="color:var(--primary-dark);">' + escapeAttr(base.tables) + '</strong><br>'
+    +   '初期値: ' + base.min + '〜' + base.max + '名 ／ ' + escapeAttr(base.note || '')
+    +   (isEdited ? '<br><span style="color:#ef6c00;font-weight:700;">現在: 編集済み</span>' : '')
+    + '</div>'
+    + '<div class="row" style="margin-bottom:12px;">'
+    +   '<div class="field" style="margin-bottom:0;">'
+    +     '<label style="font-size:11px;">最小人数</label>'
+    +     '<input type="number" id="comboEditMin" value="' + curMin + '" min="1" max="99" inputmode="numeric" />'
+    +   '</div>'
+    +   '<div class="field" style="margin-bottom:0;">'
+    +     '<label style="font-size:11px;">最大人数</label>'
+    +     '<input type="number" id="comboEditMax" value="' + curMax + '" min="1" max="99" inputmode="numeric" />'
+    +   '</div>'
+    + '</div>'
+    + '<div style="display:flex;flex-direction:column;gap:6px;">'
+    +   '<button type="button" id="comboEditSave" class="primary" style="margin:0;">💾 保存</button>'
+    +   (isEdited
+        ? '<button type="button" id="comboEditReset" class="secondary" style="margin:0;background:#fff8e1;border-color:#ffb300;color:#e65100;">↺ 初期値に戻す</button>'
+        : '')
+    +   '<button type="button" id="comboEditCancel" class="secondary" style="margin:0;">やめる</button>'
+    + '</div>';
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
+
+  box.querySelector('#comboEditCancel').onclick = function() { overlay.remove(); };
+  box.querySelector('#comboEditSave').onclick = function() {
+    const newMin = parseInt(box.querySelector('#comboEditMin').value, 10);
+    const newMax = parseInt(box.querySelector('#comboEditMax').value, 10);
+    if (isNaN(newMin) || isNaN(newMax) || newMin < 1 || newMax < 1) {
+      alert('人数は1以上の整数で入力してください。'); return;
+    }
+    if (newMin > newMax) {
+      alert('最小人数は最大人数以下にしてください。'); return;
+    }
+    const all = _loadCombinationsOverrides();
+    if (!all[currentStore]) all[currentStore] = {};
+    if (newMin === base.min && newMax === base.max) {
+      delete all[currentStore][comboId];
+    } else {
+      all[currentStore][comboId] = { min: newMin, max: newMax };
+    }
+    _saveCombinationsOverrides(all);
+    try {
+      if (typeof logActivity === 'function') {
+        logActivity('🔗 結合パターン変更', comboId + ' (' + base.tables + ')', base.min + '〜' + base.max + ' → ' + newMin + '〜' + newMax + '名');
+      }
+    } catch (e) {}
+    overlay.remove();
+    renderCombinations();
+    try { if (typeof rerenderSeatPref === 'function') rerenderSeatPref(); } catch (e) {}
+    try { if (typeof renderSeatMap === 'function') renderSeatMap(); } catch (e) {}
+    alert('✓ ' + base.tables + ' の人数を「' + newMin + '〜' + newMax + '名」に変更しました。');
+  };
+  const resetBtn = box.querySelector('#comboEditReset');
+  if (resetBtn) {
+    resetBtn.onclick = function() {
+      if (!confirm(base.tables + ' の人数を初期値「' + base.min + '〜' + base.max + '名」に戻します。よろしいですか？')) return;
+      const all = _loadCombinationsOverrides();
+      if (all[currentStore]) delete all[currentStore][comboId];
+      _saveCombinationsOverrides(all);
+      try {
+        if (typeof logActivity === 'function') {
+          logActivity('🔗 結合パターンリセット', comboId + ' (' + base.tables + ')', '初期値に復元');
+        }
+      } catch (e) {}
+      overlay.remove();
+      renderCombinations();
+      try { if (typeof rerenderSeatPref === 'function') rerenderSeatPref(); } catch (e) {}
+      try { if (typeof renderSeatMap === 'function') renderSeatMap(); } catch (e) {}
+      alert('✓ 初期値に戻しました。');
+    };
+  }
 }
 
 function renderHolidays() {
