@@ -860,6 +860,7 @@ button.secondary:active { background: var(--primary); color: white; }
 .hist-day-date { font-weight: 700; min-width: 76px; color: var(--text); }
 .hist-day-segs { flex: 1; color: var(--muted); font-size: 11px; padding: 0 8px; }
 .hist-day-total { font-weight: 700; color: var(--primary-dark); font-variant-numeric: tabular-nums; }
+.hist-day-night { min-width: 56px; text-align: right; font-weight: 700; color: #6a1b9a; font-variant-numeric: tabular-nums; }
 .staff-history-header {
   font-size: 13px; font-weight: 700; color: var(--primary-dark);
   margin-bottom: 8px;
@@ -3004,6 +3005,41 @@ function updateStaffHistoryMonthLabel(lblId, state) {
   lbl.textContent = state.year + '年 ' + state.month + '月';
 }
 
+function parseLaborTimeToMinutes(timeText) {
+  let s = String(timeText || '').trim();
+  if (!s) return null;
+  let addDay = 0;
+  if (s.indexOf('翌') === 0) {
+    addDay = 24 * 60;
+    s = s.replace(/^翌/, '');
+  }
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+  return addDay + parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// ★ Codex (2026-07-07): 深夜時間は月間労働集計・個別詳細とも 22:00〜翌5:00 で揃える。
+function calcNightMinutesBetween(startText, endText) {
+  let start = parseLaborTimeToMinutes(startText);
+  let end = parseLaborTimeToMinutes(endText);
+  if (start == null || end == null) return 0;
+  if (end <= start) end += 24 * 60;
+  let total = 0;
+  for (let base = -24 * 60; base <= 48 * 60; base += 24 * 60) {
+    const nightStart = base + 22 * 60;
+    const nightEnd = base + 29 * 60;
+    const overlap = Math.min(end, nightEnd) - Math.max(start, nightStart);
+    if (overlap > 0) total += overlap;
+  }
+  return total;
+}
+
+function calcNightMinutesFromSegments(segments) {
+  return (segments || []).reduce(function(sum, seg) {
+    return sum + calcNightMinutesBetween(seg && seg.start, seg && seg.end);
+  }, 0);
+}
+
 function changeStaffHistoryChipMonth(delta) {
   _staffHistoryChipState.month += delta;
   if (_staffHistoryChipState.month < 1)  { _staffHistoryChipState.month = 12; _staffHistoryChipState.year--; }
@@ -3912,6 +3948,7 @@ function renderStaffHistoryDetail() {
     };
     const today = new Date(); today.setHours(0,0,0,0);
     let totalMin = 0, plannedMin = 0;
+    let totalNightMin = 0, plannedNightMin = 0;
     let actualDays = 0, plannedDays = 0;
     let html = '';
     data.items.forEach(function(it) {
@@ -3925,11 +3962,16 @@ function renderStaffHistoryDetail() {
         if (seg.end) return '?-' + seg.end;
         return '';
       }).filter(Boolean).join(' / ');
+      const nightMin = (it.nightMinutes != null)
+        ? (parseInt(it.nightMinutes, 10) || 0)
+        : calcNightMinutesFromSegments(it.segments || []);
       if (isPlanned) {
         plannedMin += it.totalMinutes || 0;
+        plannedNightMin += nightMin;
         plannedDays++;
       } else {
         totalMin += it.totalMinutes || 0;
+        totalNightMin += nightMin;
         actualDays++;
       }
       const tag = isPlanned ? '<span style="background:#ffebee;color:#c62828;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">予定</span>' : '';
@@ -3937,11 +3979,12 @@ function renderStaffHistoryDetail() {
         + '<span class="hist-day-date">' + dateLabel + tag + '</span>'
         + '<span class="hist-day-segs">' + segsLabel + '</span>'
         + '<span class="hist-day-total">' + fmtH(it.totalMinutes || 0) + '</span>'
+        + '<span class="hist-day-night" title="深夜時間">' + fmtH(nightMin) + '</span>'
         + '</div>';
     });
-    html += '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実績（過去）</span><span>' + actualDays + '日 / ' + fmtH(totalMin) + '</span></div>';
+    html += '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実績（過去）</span><span>' + actualDays + '日 / ' + fmtH(totalMin) + ' / 深夜 ' + fmtH(totalNightMin) + '</span></div>';
     if (plannedDays > 0) {
-      html += '<div class="hist-summary" style="background:#ffebee;color:#c62828;"><span>予定（未来）</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + '</span></div>';
+      html += '<div class="hist-summary" style="background:#ffebee;color:#c62828;"><span>予定（未来）</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + ' / 深夜 ' + fmtH(plannedNightMin) + '</span></div>';
     }
     content.innerHTML = html;
   });
@@ -4016,10 +4059,11 @@ function renderLaborMonth() {
         return;
       }
       // 合計値計算
-      let totDays = 0, totMin = 0;
+      let totDays = 0, totMin = 0, totNightMin = 0;
       data.items.forEach(function(it) {
-        totDays += it.workDays;
-        totMin += it.totalMinutes;
+        totDays += it.workDays || 0;
+        totMin += it.totalMinutes || 0;
+        totNightMin += it.nightMinutes || 0;
       });
       const fmtH = function(min) {
         const h = Math.floor(min / 60);
@@ -4027,19 +4071,21 @@ function renderLaborMonth() {
         return h + 'h ' + (m > 0 ? m + 'm' : '');
       };
       let html = '<table class="labor-table">'
-        + '<thead><tr><th>従業員名</th><th class="lb-num">日数</th><th class="lb-num">時間</th></tr></thead>'
+        + '<thead><tr><th>名前</th><th class="lb-num">日数</th><th class="lb-num">時間</th><th class="lb-num">深夜時間</th></tr></thead>'
         + '<tbody>';
       data.items.forEach(function(it) {
         html += '<tr>'
           + '<td class="lb-name">' + it.name + '</td>'
-          + '<td class="lb-num">' + it.workDays + '日</td>'
-          + '<td class="lb-num">' + fmtH(it.totalMinutes) + '</td>'
+          + '<td class="lb-num">' + (it.workDays || 0) + '日</td>'
+          + '<td class="lb-num">' + fmtH(it.totalMinutes || 0) + '</td>'
+          + '<td class="lb-num">' + fmtH(it.nightMinutes || 0) + '</td>'
           + '</tr>';
       });
       html += '<tr style="background:var(--primary-light);font-weight:700">'
         + '<td>合計</td>'
         + '<td class="lb-num">' + totDays + '日</td>'
         + '<td class="lb-num">' + fmtH(totMin) + '</td>'
+        + '<td class="lb-num">' + fmtH(totNightMin) + '</td>'
         + '</tr>';
       html += '</tbody></table>';
       contentEl.innerHTML = html;
