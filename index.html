@@ -2212,6 +2212,25 @@ select.time-select option:disabled { color: #aaa; }
     </div>
   </div>
 
+  <!-- ★ Claude (2026-07-08): Discord 通知テスト送信（管理者のみ）
+       GAS のスクリプトプロパティに Webhook URL を設定した後、各チャンネルへテスト送信できる。 -->
+  <div class="card hidden" id="discordTestCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>💬 Discord 通知テスト <span style="font-size:11px;font-weight:400;color:var(--muted);">（管理者のみ）</span></span>
+    </h2>
+    <div style="font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:10px;">
+      GAS スクリプトプロパティに Webhook URL を登録した後、各チャンネルへテスト送信できます。<br>
+      設定手順は <code>Discord通知セットアップガイド.md</code> を参照。
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+      <button type="button" onclick="testDiscordChannel('torihashi','reservation')" style="padding:9px;font-size:12px;background:#c8e6c9;color:#1b5e20;border:1px solid #2e7d32;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🐔 鳥はし・予約</button>
+      <button type="button" onclick="testDiscordChannel('torihashi','shift')" style="padding:9px;font-size:12px;background:#bbdefb;color:#0d47a1;border:1px solid #1976d2;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🐔 鳥はし・シフト</button>
+      <button type="button" onclick="testDiscordChannel('revolverd','reservation')" style="padding:9px;font-size:12px;background:#c8e6c9;color:#1b5e20;border:1px solid #2e7d32;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🥃 リボ・予約</button>
+      <button type="button" onclick="testDiscordChannel('revolverd','shift')" style="padding:9px;font-size:12px;background:#bbdefb;color:#0d47a1;border:1px solid #1976d2;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🥃 リボ・シフト</button>
+    </div>
+    <div id="discordTestResult" style="margin-top:8px;font-size:11px;text-align:center;"></div>
+  </div>
+
   <!-- ★ Claude (2026-06-22): 商品マスタ強制再取得（管理者のみ）
        スプレッドシートで価格や商品を変更した直後、GAS のキャッシュ（最大1時間）を待たずに反映させたい時用。 -->
   <div class="card hidden" id="productReloadCard">
@@ -6168,6 +6187,9 @@ function switchTab(name) {
       if (gc) gc.classList.toggle('hidden', !isAdmin);
       const pc = document.getElementById('productReloadCard');
       if (pc) pc.classList.toggle('hidden', !isAdmin);
+      // ★ Claude (2026-07-08): Discord通知テストカードも管理者のみ表示
+      const dc = document.getElementById('discordTestCard');
+      if (dc) dc.classList.toggle('hidden', !isAdmin);
       // 商品マスタの最終取得時刻を表示
       try {
         const statusEl = document.getElementById('productLoadStatus');
@@ -8704,6 +8726,38 @@ async function reloadProductsManually() {
   } catch (err) {
     if (statusEl) statusEl.textContent = '⚠ エラー: ' + String(err);
     if (btn) { btn.disabled = false; btn.textContent = '🔄 今すぐ更新'; }
+  }
+}
+
+// ★ Claude (2026-07-08): Discord チャンネル通知テスト送信（管理者専用UIから呼ばれる）
+async function testDiscordChannel(store, kind) {
+  const resultEl = document.getElementById('discordTestResult');
+  if (resultEl) {
+    resultEl.style.color = '#ef6c00';
+    resultEl.textContent = '⏳ 送信中... (' + store + ' / ' + kind + ')';
+  }
+  try {
+    const resp = await callWebhook({
+      action: 'discordTest',
+      store: store,
+      kind: kind
+    });
+    if (resp && resp.ok) {
+      if (resultEl) {
+        resultEl.style.color = '#2e7d32';
+        resultEl.textContent = '✓ 送信成功。Discord チャンネルを確認してください（' + store + '/' + kind + '）';
+      }
+    } else {
+      if (resultEl) {
+        resultEl.style.color = '#c62828';
+        resultEl.textContent = '⚠ 失敗: ' + ((resp && resp.error) || '原因不明');
+      }
+    }
+  } catch (err) {
+    if (resultEl) {
+      resultEl.style.color = '#c62828';
+      resultEl.textContent = '⚠ 通信エラー: ' + String(err);
+    }
   }
 }
 
