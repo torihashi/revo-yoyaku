@@ -4076,6 +4076,9 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     box.innerHTML = '<span style="color:var(--muted);">対象外の給与形式（' + escapeAttr(salaryType || '未設定') + '）→ 給料確定機能はアルバイト/特殊アルバイトのみ対応</span>';
     return;
   }
+  // ★ Claude (2026-07-08): 全アルバイトで控除入力欄を常時表示（デフォルト0）
+  //   アルバイトも税/雇用保険を必要に応じて入力できるように運用を柔軟化。
+  //   0のままなら手取り = 支給合計。
 
   // 計算
   const totalHours = totalMin / 60;
@@ -4105,17 +4108,15 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     +   '<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#2e7d32;"><span>支給合計</span><span>¥' + totalGross.toLocaleString() + '</span></div>'
     + '</div>';
 
-  // 特殊アルバイトなら控除入力
-  if (isSpecialAlbait) {
-    html += '<div style="background:#ffebee;padding:8px;border-radius:6px;margin-bottom:8px;">'
-         +   '<div style="font-size:11px;color:#c62828;font-weight:700;margin-bottom:4px;">控除項目（特殊アルバイト用）</div>'
-         +   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
-         +     '<div><label style="font-size:10px;color:var(--muted);">所得税</label><input type="number" id="psIncomeTax" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
-         +     '<div><label style="font-size:10px;color:var(--muted);">住民税</label><input type="number" id="psResidentialTax" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
-         +     '<div><label style="font-size:10px;color:var(--muted);">雇用保険</label><input type="number" id="psEmploymentIns" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
-         +   '</div>'
-         + '</div>';
-  }
+  // ★ Claude (2026-07-08): 全アルバイト共通の控除入力欄（デフォルト0、必要時のみ入力）
+  html += '<div style="background:#fff3e0;padding:8px;border-radius:6px;margin-bottom:8px;">'
+       +   '<div style="font-size:11px;color:#e65100;font-weight:700;margin-bottom:4px;">控除項目（必要な場合のみ入力・不要なら0のままでOK）</div>'
+       +   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
+       +     '<div><label style="font-size:10px;color:var(--muted);">所得税</label><input type="number" id="psIncomeTax" value="0" min="0" inputmode="numeric" style="width:100%;padding:5px;font-size:12px;border:1px solid #ffb74d;border-radius:4px;" /></div>'
+       +     '<div><label style="font-size:10px;color:var(--muted);">住民税</label><input type="number" id="psResidentialTax" value="0" min="0" inputmode="numeric" style="width:100%;padding:5px;font-size:12px;border:1px solid #ffb74d;border-radius:4px;" /></div>'
+       +     '<div><label style="font-size:10px;color:var(--muted);">雇用保険</label><input type="number" id="psEmploymentIns" value="0" min="0" inputmode="numeric" style="width:100%;padding:5px;font-size:12px;border:1px solid #ffb74d;border-radius:4px;" /></div>'
+       +   '</div>'
+       + '</div>';
 
   html += '<button type="button" id="psConfirmBtn" style="width:100%;padding:10px;background:#2e7d32;color:#fff;border:none;border-radius:6px;font-weight:700;font-family:inherit;cursor:pointer;">💾 給料を確定してタイムカードv4に転送</button>'
        +  '<div id="psResult" style="margin-top:6px;font-size:11px;text-align:center;"></div>';
@@ -4130,18 +4131,24 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     resultEl.style.color = '#ef6c00';
     resultEl.textContent = '';
 
-    const incomeTax = isSpecialAlbait ? (parseInt(document.getElementById('psIncomeTax').value, 10) || 0) : 0;
-    const residentialTax = isSpecialAlbait ? (parseInt(document.getElementById('psResidentialTax').value, 10) || 0) : 0;
-    const employmentIns = isSpecialAlbait ? (parseInt(document.getElementById('psEmploymentIns').value, 10) || 0) : 0;
+    // ★ Claude (2026-07-08): 全アルバイト共通の控除処理（0のままなら手取り = 支給）
+    const incomeTax = parseInt(document.getElementById('psIncomeTax').value, 10) || 0;
+    const residentialTax = parseInt(document.getElementById('psResidentialTax').value, 10) || 0;
+    const employmentIns = parseInt(document.getElementById('psEmploymentIns').value, 10) || 0;
     const totalDeduction = incomeTax + residentialTax + employmentIns;
     const netPay = totalGross - totalDeduction;
 
     // 時:分 表記
     const totalWorkTime = Math.floor(totalMin / 60) + ':' + String(totalMin % 60).padStart(2, '0') + ':00';
 
-    if (!confirm(yearMonthStr + ' ' + staffName + 'さんの給料を確定します。\n\n支給合計: ¥' + totalGross.toLocaleString()
-              + (isSpecialAlbait ? '\n控除合計: ¥' + totalDeduction.toLocaleString() : '')
-              + '\n手取り: ¥' + netPay.toLocaleString() + '\n\nよろしいですか？')) {
+    const confirmMsg = yearMonthStr + ' ' + staffName + 'さんの給料を確定します。\n\n'
+                     + '支給合計: ¥' + totalGross.toLocaleString() + '\n'
+                     + (totalDeduction > 0
+                         ? '控除合計: ¥' + totalDeduction.toLocaleString() + '\n'
+                         : '控除: なし\n')
+                     + '手取り: ¥' + netPay.toLocaleString() + '\n\n'
+                     + 'よろしいですか？';
+    if (!confirm(confirmMsg)) {
       btn.disabled = false;
       btn.textContent = '💾 給料を確定してタイムカードv4に転送';
       return;
