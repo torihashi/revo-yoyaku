@@ -4005,8 +4005,189 @@ function renderStaffHistoryDetail() {
     if (plannedDays > 0) {
       html += '<div class="hist-summary" style="background:#ffebee;color:#c62828;"><span>予定（未来）</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + ' / 深夜 ' + fmtH(plannedNightMin) + '</span></div>';
     }
+    // ★ Claude (2026-07-08): 管理者専用「給料確定」セクションを詳細末尾に追加
+    if (currentUser && currentUser.isAdmin && actualDays > 0) {
+      html += '<div id="paySlipConfirmSection" style="margin-top:12px;padding:10px;background:#fffde7;border:1px solid #f9a825;border-radius:8px;">'
+           +   '<div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:6px;">💰 給料確定（管理者のみ）</div>'
+           +   '<div id="paySlipContent" style="font-size:12px;color:var(--muted);">読み込み中...</div>'
+           + '</div>';
+    }
     content.innerHTML = html;
+    // 給料確定セクションの中身を非同期で描画
+    if (currentUser && currentUser.isAdmin && actualDays > 0) {
+      try { renderPaySlipConfirm(_staffHistoryDetailState.name, _staffHistoryDetailState.year, _staffHistoryDetailState.month, actualDays, totalMin, totalNightMin); } catch (e) { console.error('renderPaySlipConfirm error:', e); }
+    }
   });
+}
+
+// ★ Claude (2026-07-08): 給料確定セクションの描画
+//   1. 従業員マスタから該当スタッフの給与形式・時給・深夜時給を取得
+//   2. アルバイト / 特殊アルバイト の場合のみ計算＆確定ボタン表示
+//   3. 特殊アルバイトは所得税/住民税/雇用保険の入力欄あり
+//   4. 確定タップで submitPaySlip アクションで v4 に保存
+let _employeeMasterCache = null;
+let _employeeMasterCacheAt = 0;
+
+async function _fetchEmployeeMasterCached() {
+  const now = Date.now();
+  if (_employeeMasterCache && (now - _employeeMasterCacheAt) < 5 * 60 * 1000) {
+    return _employeeMasterCache;
+  }
+  const url = WEBHOOK_URL + '?action=getEmployeeMaster&secret=' + encodeURIComponent(WEBHOOK_SECRET);
+  const r = await fetch(url);
+  const data = await r.json();
+  if (data && data.ok && Array.isArray(data.items)) {
+    _employeeMasterCache = data.items;
+    _employeeMasterCacheAt = now;
+    return data.items;
+  }
+  return null;
+}
+
+async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, nightMin) {
+  const box = document.getElementById('paySlipContent');
+  if (!box) return;
+  box.textContent = '従業員マスタ取得中...';
+  let master = null;
+  try {
+    master = await _fetchEmployeeMasterCached();
+  } catch (e) {
+    box.innerHTML = '<span style="color:#c62828;">従業員マスタ取得エラー: ' + String(e) + '</span>';
+    return;
+  }
+  if (!master) {
+    box.innerHTML = '<span style="color:#c62828;">従業員マスタが取得できませんでした</span>';
+    return;
+  }
+  // 名前で検索（完全 → 空白除去 → 部分一致）
+  const norm = function(s) { return String(s || '').replace(/\s+/g, '').trim(); };
+  const target = norm(staffName);
+  let emp = master.find(function(e) { return e.name === staffName; });
+  if (!emp) emp = master.find(function(e) { return norm(e.name) === target; });
+  if (!emp) emp = master.find(function(e) { return norm(e.name).indexOf(target) >= 0 || target.indexOf(norm(e.name)) >= 0; });
+  if (!emp) {
+    box.innerHTML = '<span style="color:#c62828;">従業員マスタに「' + escapeAttr(staffName) + '」が見つかりません</span>';
+    return;
+  }
+  const salaryType = emp.salaryType || '';
+  const isAlbait = salaryType.indexOf('アルバイト') >= 0 || salaryType.indexOf('時給') >= 0;
+  const isSpecialAlbait = salaryType.indexOf('特殊') >= 0;
+  if (!isAlbait) {
+    box.innerHTML = '<span style="color:var(--muted);">対象外の給与形式（' + escapeAttr(salaryType || '未設定') + '）→ 給料確定機能はアルバイト/特殊アルバイトのみ対応</span>';
+    return;
+  }
+
+  // 計算
+  const totalHours = totalMin / 60;
+  const nightHours = nightMin / 60;
+  const hourlyRate = emp.hourlyRate || 0;
+  const nightHourlyRate = emp.nightHourlyRate || 0;
+  const basicPay = Math.round(totalHours * hourlyRate);
+  const nightPay = Math.round(nightHours * nightHourlyRate);
+  const totalGross = basicPay + nightPay;
+  const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
+
+  let html = ''
+    + '<div style="background:#fff;padding:10px;border-radius:6px;margin-bottom:8px;">'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>👤 従業員</span><strong>' + escapeAttr(staffName) + '</strong></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>📅 対象月</span><strong>' + yearMonthStr + '</strong></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>💼 給与形式</span><strong style="color:' + (isSpecialAlbait ? '#c62828' : '#2e7d32') + ';">' + escapeAttr(salaryType) + '</strong></div>'
+    +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>出勤日数</span><span>' + workDays + '日</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>労働時間</span><span>' + totalHours.toFixed(2) + 'h</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時間</span><span>' + nightHours.toFixed(2) + 'h</span></div>'
+    +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>時給</span><span>¥' + hourlyRate.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時給</span><span>¥' + nightHourlyRate.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-top:4px;"><span>基本給（時間×時給）</span><span>¥' + basicPay.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;"><span>深夜手当（深夜×深夜時給）</span><span>¥' + nightPay.toLocaleString() + '</span></div>'
+    +   '<hr style="margin:6px 0;border:none;border-top:1px solid #999;">'
+    +   '<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#2e7d32;"><span>支給合計</span><span>¥' + totalGross.toLocaleString() + '</span></div>'
+    + '</div>';
+
+  // 特殊アルバイトなら控除入力
+  if (isSpecialAlbait) {
+    html += '<div style="background:#ffebee;padding:8px;border-radius:6px;margin-bottom:8px;">'
+         +   '<div style="font-size:11px;color:#c62828;font-weight:700;margin-bottom:4px;">控除項目（特殊アルバイト用）</div>'
+         +   '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;">'
+         +     '<div><label style="font-size:10px;color:var(--muted);">所得税</label><input type="number" id="psIncomeTax" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
+         +     '<div><label style="font-size:10px;color:var(--muted);">住民税</label><input type="number" id="psResidentialTax" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
+         +     '<div><label style="font-size:10px;color:var(--muted);">雇用保険</label><input type="number" id="psEmploymentIns" value="0" min="0" style="width:100%;padding:5px;font-size:12px;border:1px solid #f8a5a5;border-radius:4px;" /></div>'
+         +   '</div>'
+         + '</div>';
+  }
+
+  html += '<button type="button" id="psConfirmBtn" style="width:100%;padding:10px;background:#2e7d32;color:#fff;border:none;border-radius:6px;font-weight:700;font-family:inherit;cursor:pointer;">💾 給料を確定してタイムカードv4に転送</button>'
+       +  '<div id="psResult" style="margin-top:6px;font-size:11px;text-align:center;"></div>';
+
+  box.innerHTML = html;
+
+  document.getElementById('psConfirmBtn').onclick = async function() {
+    const btn = this;
+    const resultEl = document.getElementById('psResult');
+    btn.disabled = true;
+    btn.textContent = '⏳ 送信中...';
+    resultEl.style.color = '#ef6c00';
+    resultEl.textContent = '';
+
+    const incomeTax = isSpecialAlbait ? (parseInt(document.getElementById('psIncomeTax').value, 10) || 0) : 0;
+    const residentialTax = isSpecialAlbait ? (parseInt(document.getElementById('psResidentialTax').value, 10) || 0) : 0;
+    const employmentIns = isSpecialAlbait ? (parseInt(document.getElementById('psEmploymentIns').value, 10) || 0) : 0;
+    const totalDeduction = incomeTax + residentialTax + employmentIns;
+    const netPay = totalGross - totalDeduction;
+
+    // 時:分 表記
+    const totalWorkTime = Math.floor(totalMin / 60) + ':' + String(totalMin % 60).padStart(2, '0') + ':00';
+
+    if (!confirm(yearMonthStr + ' ' + staffName + 'さんの給料を確定します。\n\n支給合計: ¥' + totalGross.toLocaleString()
+              + (isSpecialAlbait ? '\n控除合計: ¥' + totalDeduction.toLocaleString() : '')
+              + '\n手取り: ¥' + netPay.toLocaleString() + '\n\nよろしいですか？')) {
+      btn.disabled = false;
+      btn.textContent = '💾 給料を確定してタイムカードv4に転送';
+      return;
+    }
+
+    try {
+      const resp = await callWebhook({
+        action: 'submitPaySlip',
+        userEmail: (currentUser && currentUser.email) || '',
+        yearMonth: yearMonthStr,
+        employeeName: staffName,
+        salaryType: salaryType,
+        workDays: workDays,
+        totalWorkTime: totalWorkTime,
+        totalHours: totalHours.toFixed(2),
+        nightHours: nightHours.toFixed(2),
+        hourlyRate: hourlyRate,
+        nightHourlyRate: nightHourlyRate,
+        basicPay: basicPay,
+        nightPay: nightPay,
+        totalGross: totalGross,
+        incomeTax: incomeTax,
+        residentialTax: residentialTax,
+        employmentInsurance: employmentIns,
+        totalDeduction: totalDeduction,
+        netPay: netPay,
+        confirmedBy: (currentUser && currentUser.name) || (currentUser && currentUser.email) || 'unknown'
+      });
+      if (resp && resp.ok) {
+        resultEl.style.color = '#2e7d32';
+        resultEl.textContent = '✓ 「給料明細履歴」シートに追記しました';
+        btn.textContent = '✓ 確定完了';
+        try { logActivity('💰 給料確定', staffName + ' ' + yearMonthStr, '支給:¥' + totalGross.toLocaleString() + (isSpecialAlbait ? ' / 手取:¥' + netPay.toLocaleString() : '')); } catch (e) {}
+      } else {
+        resultEl.style.color = '#c62828';
+        resultEl.textContent = '⚠ 失敗: ' + ((resp && resp.error) || '不明');
+        btn.disabled = false;
+        btn.textContent = '💾 給料を確定してタイムカードv4に転送';
+      }
+    } catch (e) {
+      resultEl.style.color = '#c62828';
+      resultEl.textContent = '⚠ 通信エラー: ' + String(e);
+      btn.disabled = false;
+      btn.textContent = '💾 給料を確定してタイムカードv4に転送';
+    }
+  };
 }
 
 // ============================================================
@@ -6229,6 +6410,7 @@ function adjustNum(delta) {
   let v = parseInt(inp.value) || 1;
   v = Math.max(1, Math.min(80, v + delta));
   inp.value = v;
+  onResPeopleChange('stepper');
 }
 
 // ============================================================
@@ -10372,7 +10554,7 @@ function initAllCalendars() {
 
 // 新規予約の人数入力欄が変わったら即座に state.people を更新
 // （バグ防止：空き確認後に人数だけ変えてもステップ2へ正しく反映）
-function onResPeopleChange() {
+function onResPeopleChange(source) {
   const inp = document.getElementById('resPeople');
   if (!inp) return;
   const v = parseInt(inp.value);
@@ -10390,7 +10572,11 @@ function onResPeopleChange() {
     // ★ Claude (2026-06-22): 「空き時間を確認」ボタンを廃止したので人数確定で自動再判定。
     //   連打抑止のため 300ms デバウンス。step1 表示中のみ動かす（step2/3 では無視）。
     if (state.step === 1 || !state.step) {
-      _scheduleAutoCheckAvailability();
+      _scheduleAutoCheckAvailability({
+        value: String(inp.value || ''),
+        source: source || 'input',
+        inputFocused: document.activeElement === inp
+      });
     }
   }
 }
@@ -10400,13 +10586,23 @@ function onResPeopleChange() {
 //   ★ 仕様: 画面エントリ直後の自動判定はスクロールしない（quickNewReservationFromList から直接呼ぶ）。
 //            この関数経由（=ユーザーが人数を変えた時）のみスクロールする。
 let _autoCheckTimer = null;
-function _scheduleAutoCheckAvailability() {
+function _scheduleAutoCheckAvailability(opts) {
+  opts = opts || {};
+  const scheduledValue = String(opts.value || '');
+  const isSingleDigitTyping = opts.source !== 'stepper'
+    && opts.inputFocused
+    && /^[1-9]$/.test(scheduledValue);
+  // ★ Codex (2026-07-10): iPhoneで「10」を入れる途中の「1」でblur/scrollしないよう、
+  // 1桁を手入力中だけ少し長めに待ち、入力値が変わっていたら古い判定を破棄する。
+  const delay = isSingleDigitTyping ? 900 : 300;
   if (_autoCheckTimer) clearTimeout(_autoCheckTimer);
   _autoCheckTimer = setTimeout(function() {
     _autoCheckTimer = null;
     try {
       const dateInp = document.getElementById('resDate');
+      const peopleInp = document.getElementById('resPeople');
       if (!dateInp || !dateInp.value) return;
+      if (peopleInp && scheduledValue && String(peopleInp.value || '') !== scheduledValue) return;
       if (typeof checkAvailability === 'function') checkAvailability();
       // ★ Claude (2026-06-22): ユーザー入力起点の判定後は、
       //   ①数字キーパッドを閉じる（blur） → ②時刻スロット領域へスムーズスクロール
