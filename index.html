@@ -10611,21 +10611,30 @@ function _scheduleAutoCheckAvailability(opts) {
       if (!dateInp || !dateInp.value) return;
       if (peopleInp && scheduledValue && String(peopleInp.value || '') !== scheduledValue) return;
       if (typeof checkAvailability === 'function') checkAvailability();
-      // ★ Claude (2026-06-22): ユーザー入力起点の判定後は、
-      //   ①数字キーパッドを閉じる（blur） → ②時刻スロット領域へスムーズスクロール
+      // ★ Claude (2026-07-10): 「10」を入力途中の「1」で blur/scroll しないよう、
+      //   1桁の時は blur も scroll もスキップする。ユーザーはまだ2桁目を入力する可能性が高い。
+      //   → 「1」入力で time slots が表示されるが、キーボードは開いたまま。「0」を続けて入力できる。
+      //   2桁以上（10名以上）を確定した時のみ blur+scroll する。
       setTimeout(function() {
         try {
           const pplInp = document.getElementById('resPeople');
+          const curValue = pplInp ? String(pplInp.value || '') : '';
+          const isSingleDigit = /^[1-9]$/.test(curValue);
+          // 1桁のままなら blur も scroll もスキップ（ユーザーが2桁目を入力する余地を残す）
+          if (isSingleDigit) return;
           if (pplInp && document.activeElement === pplInp) pplInp.blur();
         } catch (e) {}
         // blur 後の少し遅延でレイアウト確定後にスクロール
         setTimeout(function() {
+          const pplInp = document.getElementById('resPeople');
+          const curValue = pplInp ? String(pplInp.value || '') : '';
+          if (/^[1-9]$/.test(curValue)) return; // ここでも1桁なら念のためスクロールもしない
           const grid = document.getElementById('slotGrid');
           if (grid) try { grid.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
         }, 100);
       }, 50);
     } catch (e) {}
-  }, 300);
+  }, delay);
 }
 
 // ★ Claude (2026-06-22): step1 の日付フィールドを開閉。通常は閉じていて、変更したい時だけ展開。
