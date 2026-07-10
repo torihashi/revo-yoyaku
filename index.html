@@ -6638,6 +6638,12 @@ function findSeatCandidates(people, date, time) {
 }
 
 function proceedToStep2() {
+  // ★ Codex (2026-07-10): 人数入力の自動判定タイマーが時刻選択後に遅れて走ると、
+  // checkAvailability() が state.time を空に戻して確認画面で止まるため、step2へ進む時点で止める。
+  if (typeof _autoCheckTimer !== 'undefined' && _autoCheckTimer) {
+    clearTimeout(_autoCheckTimer);
+    _autoCheckTimer = null;
+  }
   // 🛡 安全弁：Step1 の人数入力欄の最新値を必ず state にも反映
   const peopleInp = document.getElementById('resPeople');
   if (peopleInp && peopleInp.value) {
@@ -10609,6 +10615,8 @@ function _scheduleAutoCheckAvailability(opts) {
       const dateInp = document.getElementById('resDate');
       const peopleInp = document.getElementById('resPeople');
       if (!dateInp || !dateInp.value) return;
+      const step1 = document.getElementById('step1');
+      if (state.step === 2 || state.step === 3 || (step1 && step1.classList.contains('hidden'))) return;
       if (peopleInp && scheduledValue && String(peopleInp.value || '') !== scheduledValue) return;
       if (typeof checkAvailability === 'function') checkAvailability();
       // ★ Claude (2026-07-10): 「10」を入力途中の「1」で blur/scroll しないよう、
