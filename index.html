@@ -6178,14 +6178,16 @@ window.addEventListener('DOMContentLoaded', () => {
     var phoneAutoMoved = false;
     phoneInput.addEventListener('input', function() {
       var digits = (phoneInput.value || '').replace(/[^\d]/g, '');
-      if (!phoneAutoMoved && digits.length >= 9) {
+      // ★ Codex (2026-07-10): 携帯番号11桁を入れ切ってから下へ移動する。
+      // 9〜10桁で動くと入力途中に画面が下がり、最後の桁を入れづらいため。
+      if (!phoneAutoMoved && digits.length >= 11) {
         phoneAutoMoved = true;
         setTimeout(function() {
           var coursesLabel = document.getElementById('courseGrid');
           if (coursesLabel) coursesLabel.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }, 180);
       }
-      if (digits.length < 9) phoneAutoMoved = false;
+      if (digits.length < 11) phoneAutoMoved = false;
     });
     phoneInput.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.isComposing) {
