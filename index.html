@@ -3932,8 +3932,101 @@ function renderStaffHistoryChips() {
       + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>'
       + '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実動時間（実績）</span><span>' + fmtH(totalMin) + '</span></div>'
       + '<div style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:600;">📋 日別詳細</div>'
-      + details;
+      + details
+      // ★ Claude (2026-07-11): 給料明細セクション（確定済みなら表示）
+      + '<div id="staffChipPaySlipSection" style="margin-top:14px;"></div>';
+    // 給料明細を非同期取得して表示
+    try {
+      _fetchAndRenderPaySlipForStaff(
+        _staffHistoryChipState.name,
+        _staffHistoryChipState.year,
+        _staffHistoryChipState.month,
+        'staffChipPaySlipSection'
+      );
+    } catch (e) { console.error('renderPaySlipForStaff error:', e); }
   });
+}
+
+// ============================================================
+// ★ Claude (2026-07-11): PIN認証済みスタッフ画面の給料明細表示
+// 給料明細履歴シートから該当年月の明細を取得し、確定済みなら表示する。
+// 確定者は非表示、確定日時のみ表示。
+// ============================================================
+function _fetchAndRenderPaySlipForStaff(staffName, year, month, targetElId) {
+  const el = document.getElementById(targetElId);
+  if (!el) return;
+  if (!staffName || !year || !month) {
+    el.innerHTML = '';
+    return;
+  }
+  const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
+  el.innerHTML = '<div style="font-size:11px;color:var(--muted);text-align:center;padding:6px;">💰 給料明細 読み込み中...</div>';
+  const url = WEBHOOK_URL
+    + '?action=getPaySlip'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&employeeName=' + encodeURIComponent(staffName)
+    + '&yearMonth=' + encodeURIComponent(yearMonthStr);
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data || !data.ok) {
+        el.innerHTML = '<div style="font-size:11px;color:#c62828;padding:6px;">給料明細 取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
+        return;
+      }
+      const item = data.item;
+      if (!item) {
+        // 未確定：非表示 or 案内メッセージ
+        el.innerHTML = '<div style="margin-top:6px;padding:10px;background:#f5f5f5;border-radius:6px;text-align:center;font-size:12px;color:var(--muted);">💰 ' + yearMonthStr + ' の給料明細はまだ確定されていません</div>';
+        return;
+      }
+      // 確定済み：明細を表示
+      const yen = function(n) { return '¥' + (parseInt(n, 10) || 0).toLocaleString(); };
+      const hasDeduction = (item.totalDeduction || 0) > 0;
+      const rowStyle = 'display:flex;justify-content:space-between;font-size:12px;padding:2px 0;';
+      const rowStyleBold = 'display:flex;justify-content:space-between;font-size:13px;font-weight:700;padding:3px 0;';
+      const hr = '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">';
+      const hrSolid = '<hr style="margin:6px 0;border:none;border-top:1px solid #999;">';
+
+      let html = ''
+        + '<div style="background:#fffde7;border:2px solid #f9a825;border-radius:10px;padding:12px;margin-top:8px;">'
+        +   '<div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px;text-align:center;">💰 ' + yearMonthStr + ' 給料明細（確定済み）</div>'
+        +   '<div style="background:#fff;padding:10px;border-radius:6px;">'
+        +     '<div style="' + rowStyle + '"><span>👤 従業員</span><strong>' + escapeAttr(item.employeeName) + '</strong></div>'
+        +     '<div style="' + rowStyle + '"><span>💼 給与形式</span><span>' + escapeAttr(item.salaryType || '-') + '</span></div>'
+        +     hr
+        +     '<div style="' + rowStyle + '"><span>出勤日数</span><span>' + item.workDays + '日</span></div>'
+        +     '<div style="' + rowStyle + '"><span>労働時間</span><span>' + (parseFloat(item.totalHours) || 0).toFixed(2) + 'h</span></div>'
+        +     '<div style="' + rowStyle + '"><span>深夜時間</span><span>' + (parseFloat(item.nightHours) || 0).toFixed(2) + 'h</span></div>'
+        +     hr
+        +     '<div style="' + rowStyle + '"><span>時給</span><span>' + yen(item.hourlyRate) + '</span></div>'
+        +     '<div style="' + rowStyle + '"><span>深夜時給</span><span>' + yen(item.nightHourlyRate) + '</span></div>'
+        +     '<div style="' + rowStyleBold + '"><span>基本給</span><span>' + yen(item.basicPay) + '</span></div>'
+        +     '<div style="' + rowStyleBold + '"><span>深夜手当</span><span>' + yen(item.nightPay) + '</span></div>'
+        +     hrSolid
+        +     '<div style="' + rowStyleBold + 'color:#2e7d32;"><span>支給合計</span><span>' + yen(item.totalGross) + '</span></div>';
+
+      if (hasDeduction) {
+        html += hr
+             + '<div style="font-size:11px;color:#e65100;font-weight:700;margin:4px 0;">控除項目</div>'
+             + '<div style="' + rowStyle + '"><span>所得税</span><span>-' + yen(item.incomeTax) + '</span></div>'
+             + '<div style="' + rowStyle + '"><span>住民税</span><span>-' + yen(item.residentialTax) + '</span></div>'
+             + '<div style="' + rowStyle + '"><span>雇用保険</span><span>-' + yen(item.employmentInsurance) + '</span></div>'
+             + '<div style="' + rowStyleBold + 'color:#c62828;"><span>控除合計</span><span>-' + yen(item.totalDeduction) + '</span></div>'
+             + hrSolid
+             + '<div style="' + rowStyleBold + 'font-size:15px;color:#1976d2;"><span>💵 手取り</span><span>' + yen(item.netPay) + '</span></div>';
+      } else {
+        html += hrSolid
+             + '<div style="' + rowStyleBold + 'font-size:15px;color:#1976d2;"><span>💵 手取り</span><span>' + yen(item.netPay) + '</span></div>';
+      }
+
+      html +=   '</div>'
+        +     '<div style="font-size:10px;color:var(--muted);text-align:right;margin-top:6px;">' + escapeAttr(item.confirmedAt || '') + ' に確定</div>'
+        + '</div>';
+      el.innerHTML = html;
+    })
+    .catch(function(e) {
+      el.innerHTML = '<div style="font-size:11px;color:#c62828;padding:6px;">給料明細 通信エラー: ' + String(e) + '</div>';
+    });
 }
 
 // 管理者：詳細表示（時間・合計）
