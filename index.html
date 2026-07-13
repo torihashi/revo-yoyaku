@@ -1972,6 +1972,28 @@ select.time-select option:disabled { color: #aaa; }
       <button class="primary" onclick="quickNewReservationFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">＋ 新規予約</button>
       <button class="secondary" onclick="quickNewTakeoutFromList()" style="flex:1;padding:10px;margin-top:0;font-size:14px;">🥡 新規お土産</button>
     </div>
+    <!-- ★ Claude (2026-07-13): 過去予約検索 -->
+    <details id="pastReservationSearchDetails" style="margin:0 0 12px;background:#f5f5f5;border-radius:8px;padding:8px 10px;">
+      <summary style="font-size:13px;font-weight:700;cursor:pointer;color:#1976d2;">🔍 過去予約の検索（両店舗横断）</summary>
+      <div style="margin-top:10px;">
+        <div style="display:flex;gap:6px;margin-bottom:6px;">
+          <input type="tel" id="pastSearchPhone" placeholder="電話番号（部分一致）" style="flex:2;padding:8px;font-size:13px;border:1px solid #ccc;border-radius:6px;" inputmode="numeric" />
+          <input type="text" id="pastSearchName" placeholder="お名前（カナ部分一致）" style="flex:2;padding:8px;font-size:13px;border:1px solid #ccc;border-radius:6px;" />
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:6px;align-items:center;">
+          <label style="font-size:11px;color:var(--muted);">遡り年数:</label>
+          <select id="pastSearchYears" style="padding:6px;font-size:12px;border:1px solid #ccc;border-radius:6px;">
+            <option value="1">1年</option>
+            <option value="3" selected>3年</option>
+            <option value="5">5年</option>
+            <option value="10">10年</option>
+          </select>
+          <button type="button" class="primary" onclick="executePastReservationSearch()" style="flex:1;padding:8px;font-size:13px;margin-top:0;">検索</button>
+          <button type="button" class="secondary" onclick="clearPastReservationSearch()" style="padding:8px 12px;font-size:12px;margin-top:0;">クリア</button>
+        </div>
+        <div id="pastReservationSearchResult" style="margin-top:8px;font-size:12px;"></div>
+      </div>
+    </details>
     <div id="reservationList"></div>
     <!-- ★ Claude (2026-06-22): 座席表と同じ「本日のシフト」欄。renderStaffRail が両レールに同じHTMLを書き込む。
          (2026-06-22 修正) 集計サマリの「上」に配置するため、サマリ行のすぐ上へ移動。 -->
@@ -9726,6 +9748,136 @@ function reservationDisplayCourseLabel(r) {
 }
 
 // 一覧から新規予約へ：表示中の日付を引き継いで遷移
+// ============================================================
+// ★ Claude (2026-07-13): 過去予約検索（一覧タブ）
+// 電話番号 or 名前で両店舗を横断検索。結果は日付降順で表示。
+// ============================================================
+function executePastReservationSearch() {
+  const phoneEl = document.getElementById('pastSearchPhone');
+  const nameEl = document.getElementById('pastSearchName');
+  const yearsEl = document.getElementById('pastSearchYears');
+  const resultEl = document.getElementById('pastReservationSearchResult');
+  if (!phoneEl || !nameEl || !resultEl) return;
+
+  const phone = (phoneEl.value || '').trim();
+  const name = (nameEl.value || '').trim();
+  const yearsBack = parseInt((yearsEl && yearsEl.value) || '3', 10);
+
+  if (!phone && !name) {
+    resultEl.innerHTML = '<div style="color:#c62828;padding:6px;">⚠ 電話番号または名前を入力してください</div>';
+    return;
+  }
+
+  resultEl.innerHTML = '<div style="color:var(--muted);padding:6px;">🔍 検索中... (' + yearsBack + '年遡って両店舗を検索中)</div>';
+
+  const url = WEBHOOK_URL
+    + '?action=searchReservations'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&phone=' + encodeURIComponent(phone)
+    + '&name=' + encodeURIComponent(name)
+    + '&store=both'
+    + '&yearsBack=' + yearsBack;
+  fetch(url)
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!data || !data.ok) {
+        resultEl.innerHTML = '<div style="color:#c62828;padding:6px;">⚠ 検索失敗: ' + (data && data.error ? data.error : '不明') + '</div>';
+        return;
+      }
+      renderPastReservationSearchResults(data);
+    })
+    .catch(function(e) {
+      resultEl.innerHTML = '<div style="color:#c62828;padding:6px;">⚠ 通信エラー: ' + String(e) + '</div>';
+    });
+}
+
+function clearPastReservationSearch() {
+  const phoneEl = document.getElementById('pastSearchPhone');
+  const nameEl = document.getElementById('pastSearchName');
+  const resultEl = document.getElementById('pastReservationSearchResult');
+  if (phoneEl) phoneEl.value = '';
+  if (nameEl) nameEl.value = '';
+  if (resultEl) resultEl.innerHTML = '';
+}
+
+function renderPastReservationSearchResults(data) {
+  const resultEl = document.getElementById('pastReservationSearchResult');
+  if (!resultEl) return;
+  const items = data.items || [];
+  const count = items.length;
+
+  if (count === 0) {
+    resultEl.innerHTML = '<div style="padding:10px;background:#fff;border-radius:6px;text-align:center;color:var(--muted);">該当する予約は見つかりませんでした</div>';
+    return;
+  }
+
+  // 店舗別集計
+  const byStore = { torihashi: [], revolverd: [] };
+  items.forEach(function(it) {
+    if (it.store === 'revolverd') byStore.revolverd.push(it);
+    else byStore.torihashi.push(it);
+  });
+
+  const wd = ['日', '月', '火', '水', '木', '金', '土'];
+  const fmtDate = function(iso) {
+    const d = new Date(iso);
+    return d.getFullYear() + '/' + String(d.getMonth() + 1).padStart(2, '0') + '/' + String(d.getDate()).padStart(2, '0') + '（' + wd[d.getDay()] + '）';
+  };
+  const fmtTime = function(iso) {
+    const d = new Date(iso);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  };
+  const escapeHtml = function(s) {
+    return String(s || '').replace(/[&<>"']/g, function(c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  };
+  const todayMs = new Date().setHours(0, 0, 0, 0);
+
+  const renderStoreSection = function(storeKey, list, storeLabel, storeColor) {
+    if (list.length === 0) return '';
+    const rows = list.map(function(r) {
+      const isFuture = new Date(r.start).getTime() >= todayMs;
+      const dateStr = fmtDate(r.start);
+      const timeStr = fmtTime(r.start);
+      const nameStr = r.extractedName || parseNameFromTitleText(r.title) || '?';
+      const peopleStr = r.extractedPeople || '';
+      const phoneStr = r.extractedPhone || '';
+      const courseStr = r.extractedCourse || '';
+      const tag = isFuture ? '<span style="background:#ffebee;color:#c62828;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:4px;">今後</span>' : '';
+      return '<div style="background:#fff;border-left:3px solid ' + storeColor + ';padding:8px 10px;margin-bottom:4px;border-radius:4px;">'
+        +   '<div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">'
+        +     '<span><strong>' + dateStr + ' ' + timeStr + '</strong>' + tag + '</span>'
+        +     (peopleStr ? '<span style="color:#1976d2;font-weight:700;">' + escapeHtml(peopleStr) + '</span>' : '')
+        +   '</div>'
+        +   '<div style="font-size:12px;color:#333;margin-top:2px;">'
+        +     '👤 ' + escapeHtml(nameStr) + '様'
+        +     (phoneStr ? ' <span style="color:#666;font-size:11px;">📞 ' + escapeHtml(phoneStr) + '</span>' : '')
+        +   '</div>'
+        +   (courseStr ? '<div style="font-size:11px;color:#666;margin-top:2px;">' + escapeHtml(courseStr) + '</div>' : '')
+        + '</div>';
+    }).join('');
+    return '<div style="margin-top:10px;">'
+      +   '<div style="font-size:12px;font-weight:700;color:' + storeColor + ';margin-bottom:4px;">' + storeLabel + '（' + list.length + '件）</div>'
+      +   rows
+      + '</div>';
+  };
+
+  let html = '<div style="padding:8px;background:#e3f2fd;color:#0d47a1;border-radius:6px;font-weight:700;font-size:13px;margin-bottom:8px;">'
+    + '合計 ' + count + '件（' + (data.query && data.query.yearsBack ? data.query.yearsBack + '年' : '3年') + '遡り）'
+    + '</div>';
+  html += renderStoreSection('torihashi', byStore.torihashi, '🐔 鳥はし', '#e65100');
+  html += renderStoreSection('revolverd', byStore.revolverd, '🥃 リボルバード', '#6a1b9a');
+  resultEl.innerHTML = html;
+}
+
+// タイトルから名前を抽出するヘルパー（parseNameFromTitle が既にある場合は流用可）
+function parseNameFromTitleText(title) {
+  if (!title) return '';
+  const m = String(title).match(/([^\s、,]+)様/);
+  return m ? m[1] : '';
+}
+
 function quickNewReservationFromList() {
   const listDate = document.getElementById('listDate');
   const targetDate = (listDate && listDate.value) || todayStr();
