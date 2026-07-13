@@ -3096,7 +3096,48 @@ function changeStaffHistoryDetailMonth(delta) {
   renderStaffHistoryDetail();
 }
 
-// 共通フェッチ
+// ============================================================
+// ★ Claude (2026-07-14): シフトデータ localStorage キャッシュ
+// キー: staffMonthCache::<store>::<name>::<year>-<month>
+// TTL: 5分（staffMonthCacheTtlMs）
+// stale-while-revalidate パターン:
+//   1. キャッシュあり → 即描画
+//   2. 裏でフレッシュ取得 → 差分あれば静かに再描画
+//   3. キャッシュなし → 通常フロー
+// ============================================================
+const STAFF_MONTH_CACHE_PREFIX = 'staffMonthCache::';
+const STAFF_MONTH_CACHE_TTL_MS = 5 * 60 * 1000;
+
+function _staffMonthCacheKey(state) {
+  return STAFF_MONTH_CACHE_PREFIX + (currentStore || 'torihashi') + '::' + (state.name || '') + '::' + state.year + '-' + state.month;
+}
+function _getCachedStaffMonthDays(state) {
+  try {
+    const raw = localStorage.getItem(_staffMonthCacheKey(state));
+    if (!raw) return null;
+    const cached = JSON.parse(raw);
+    if (!cached || !cached.data) return null;
+    if (Date.now() - (cached.at || 0) > STAFF_MONTH_CACHE_TTL_MS) return null;
+    return cached.data;
+  } catch (e) { return null; }
+}
+function _setCachedStaffMonthDays(state, data) {
+  try {
+    localStorage.setItem(_staffMonthCacheKey(state), JSON.stringify({ at: Date.now(), data: data }));
+  } catch (e) { /* localStorage 容量オーバー等は無視 */ }
+}
+function _clearAllStaffMonthCache() {
+  try {
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.indexOf(STAFF_MONTH_CACHE_PREFIX) === 0) toRemove.push(k);
+    }
+    toRemove.forEach(function(k) { localStorage.removeItem(k); });
+  } catch (e) {}
+}
+
+// 共通フェッチ（従来のコールバック版・後方互換のため残す）
 function _fetchStaffMonthDays(state, callback) {
   if (!isWebhookConfigured()) { callback({ ok: false, error: 'Webhook未設定' }); return; }
   if (!state.name) { callback(null); return; }
@@ -3107,8 +3148,35 @@ function _fetchStaffMonthDays(state, callback) {
     + '&name=' + encodeURIComponent(state.name)
     + '&year=' + state.year
     + '&month=' + state.month;
-  fetch(url).then(function(r) { return r.json(); }).then(callback).catch(function() {
+  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    // フレッシュ取得成功 → キャッシュに保存
+    if (data && data.ok) _setCachedStaffMonthDays(state, data);
+    callback(data);
+  }).catch(function() {
     callback({ ok: false, error: '通信エラー' });
+  });
+}
+
+// ★ Promise 版（並列取得用）
+function _fetchStaffMonthDaysPromise(state) {
+  return new Promise(function(resolve) {
+    _fetchStaffMonthDays(state, resolve);
+  });
+}
+
+// ★ Promise 版: 給料明細
+function _fetchPaySlipPromise(staffName, year, month) {
+  return new Promise(function(resolve) {
+    if (!staffName || !year || !month) { resolve({ ok: true, item: null }); return; }
+    const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
+    const url = WEBHOOK_URL
+      + '?action=getPaySlip'
+      + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+      + '&employeeName=' + encodeURIComponent(staffName)
+      + '&yearMonth=' + encodeURIComponent(yearMonthStr);
+    fetch(url).then(function(r) { return r.json(); }).then(resolve).catch(function() {
+      resolve({ ok: false, error: '通信エラー' });
+    });
   });
 }
 
@@ -3893,12 +3961,30 @@ function renderStaffHistoryChips() {
     content.innerHTML = '<div class="staff-empty">PINを入力して「表示」をタップしてください</div>';
     return;
   }
-  content.innerHTML = '<div class="staff-empty">取得中...</div>';
+  // ★ Claude (2026-07-14): 案A + C 高速化
+  //   1. localStorage キャッシュがあれば即描画
+  //   2. 給料明細も並列取得（Promise.all）
+  //   3. フレッシュ取得成功で再描画
+  const cached = _getCachedStaffMonthDays(_staffHistoryChipState);
+  if (cached && cached.ok) {
+    _renderStaffHistoryChipsInner(cached, true);
+  } else {
+    content.innerHTML = '<div class="staff-empty">取得中...</div>';
+  }
   _fetchStaffMonthDays(_staffHistoryChipState, function(data) {
     if (!data || !data.ok) {
-      content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
+      if (!cached) content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
       return;
     }
+    _renderStaffHistoryChipsInner(data, false);
+  });
+}
+
+// 描画本体（キャッシュ・フレッシュ両方から呼ばれる）
+function _renderStaffHistoryChipsInner(data, showRefreshing) {
+  const content = document.getElementById('staffHistoryChipContent');
+  if (!content) return;
+  {
     data.items = (data.items || []).filter(function(it) {
       const title = String(it.title || it.name || '').trim();
       return title.indexOf('❌') < 0 && title.indexOf('不可') < 0
@@ -3950,14 +4036,16 @@ function renderStaffHistoryChips() {
         + '</div>';
     }).join('');
 
-    content.innerHTML = '<div class="hist-chips">' + chips + '</div>'
+    const refreshBadge = showRefreshing ? '<div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:4px;">🔄 最新データ取得中...</div>' : '';
+    content.innerHTML = refreshBadge
+      + '<div class="hist-chips">' + chips + '</div>'
       + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>'
       + '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実動時間（実績）</span><span>' + fmtH(totalMin) + '</span></div>'
       + '<div style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:600;">📋 日別詳細</div>'
       + details
       // ★ Claude (2026-07-11): 給料明細セクション（確定済みなら表示）
       + '<div id="staffChipPaySlipSection" style="margin-top:14px;"></div>';
-    // 給料明細を非同期取得して表示
+    // 給料明細を非同期取得して表示（並列化・キャッシュ時は再取得スキップしない）
     try {
       _fetchAndRenderPaySlipForStaff(
         _staffHistoryChipState.name,
@@ -3966,7 +4054,7 @@ function renderStaffHistoryChips() {
         'staffChipPaySlipSection'
       );
     } catch (e) { console.error('renderPaySlipForStaff error:', e); }
-  });
+  }
 }
 
 // ============================================================
@@ -4052,6 +4140,10 @@ function _fetchAndRenderPaySlipForStaff(staffName, year, month, targetElId) {
 }
 
 // 管理者：詳細表示（時間・合計）
+// ★ Claude (2026-07-14): stale-while-revalidate + 並列取得で高速化
+//   1. localStorage キャッシュがあれば即描画（「更新中...」インジケータ付き）
+//   2. 裏でフレッシュ取得 → 差分あれば再描画
+//   3. 従業員マスタも並列取得しておく（renderPaySlipConfirm で使用）
 function renderStaffHistoryDetail() {
   const content = document.getElementById('staffHistoryDetailContent');
   if (!content) return;
@@ -4059,12 +4151,33 @@ function renderStaffHistoryDetail() {
     content.innerHTML = '<div class="staff-empty">従業員を選択してください</div>';
     return;
   }
-  content.innerHTML = '<div class="staff-empty">取得中...</div>';
+
+  // 従業員マスタを先取り（並列化）→ 後の renderPaySlipConfirm で使う
+  try { _fetchEmployeeMasterCached().catch(function() {}); } catch (e) {}
+
+  // ★ 案C: キャッシュ即描画 → その後フレッシュ取得
+  const cached = _getCachedStaffMonthDays(_staffHistoryDetailState);
+  if (cached && cached.ok) {
+    _renderStaffHistoryDetailInner(cached, true); // showRefreshing = true
+  } else {
+    content.innerHTML = '<div class="staff-empty">取得中...</div>';
+  }
+
   _fetchStaffMonthDays(_staffHistoryDetailState, function(data) {
     if (!data || !data.ok) {
-      content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
+      // フレッシュ失敗でもキャッシュがあれば表示のまま
+      if (!cached) content.innerHTML = '<div class="staff-empty">取得失敗: ' + (data && data.error ? data.error : '') + '</div>';
       return;
     }
+    _renderStaffHistoryDetailInner(data, false);
+  });
+}
+
+// 描画本体（キャッシュ・フレッシュ両方から呼ばれる）
+function _renderStaffHistoryDetailInner(data, showRefreshing) {
+  const content = document.getElementById('staffHistoryDetailContent');
+  if (!content) return;
+  {
     data.items = (data.items || []).filter(function(it) {
       const title = String(it.title || it.name || '').trim();
       return title.indexOf('❌') < 0 && title.indexOf('不可') < 0
@@ -4130,12 +4243,16 @@ function renderStaffHistoryDetail() {
            +   '<div id="paySlipContent" style="font-size:12px;color:var(--muted);">読み込み中...</div>'
            + '</div>';
     }
+    // 「更新中...」インジケータ（キャッシュ表示時のみ）
+    if (showRefreshing) {
+      html = '<div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:4px;">🔄 最新データ取得中...</div>' + html;
+    }
     content.innerHTML = html;
     // 給料確定セクションの中身を非同期で描画
     if (currentUser && currentUser.isAdmin && actualDays > 0) {
       try { renderPaySlipConfirm(_staffHistoryDetailState.name, _staffHistoryDetailState.year, _staffHistoryDetailState.month, actualDays, totalMin, totalNightMin); } catch (e) { console.error('renderPaySlipConfirm error:', e); }
     }
-  });
+  }
 }
 
 // ★ Claude (2026-07-08): 給料確定セクションの描画
