@@ -6241,16 +6241,29 @@ window.addEventListener('DOMContentLoaded', () => {
   }
 
   // 3) 名前入力で Enter → 電話番号へフォーカス
+  // ★ Claude (2026-07-12): 自動遷移までの待ち時間を長めに、かつ名前の長さで動的調整する。
+  //   ユーザー報告: 650ms は短すぎて名前入力途中で電話欄に飛んでしまう。
+  //   長さ2: 3000ms (もっと入力する可能性が高い、思考時間も考慮)
+  //   長さ3: 2200ms
+  //   長さ4以上: 1500ms (だいたい入力完了しているだろうが焦らせない)
+  //   Enterキーで即遷移は継続。
   var nameInputForFocus = document.getElementById('custName');
   if (nameInputForFocus) {
     var nameAutoTimer = null;
     function maybeAdvanceNameToPhone() {
       clearTimeout(nameAutoTimer);
+      var currentVal = (nameInputForFocus.value || '').trim();
+      var len = currentVal.length;
+      if (len < 2) return; // 短すぎる場合は待たない（そもそもタイマー開始しない）
+      var delay = len >= 4 ? 1500 : (len >= 3 ? 2200 : 3000);
       nameAutoTimer = setTimeout(function() {
         if (document.activeElement !== nameInputForFocus) return;
-        if ((nameInputForFocus.value || '').trim().length < 2) return;
+        // タイマー起動時の値と現在値を比較。まだ入力を続けている場合はキャンセル
+        var nowVal = (nameInputForFocus.value || '').trim();
+        if (nowVal !== currentVal) return;
+        if (nowVal.length < 2) return;
         focusAndReveal(document.getElementById('custPhone'));
-      }, 650);
+      }, delay);
     }
     nameInputForFocus.addEventListener('input', function(e) {
       if (e.isComposing) return;
@@ -6260,9 +6273,14 @@ window.addEventListener('DOMContentLoaded', () => {
     nameInputForFocus.addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault();
+        clearTimeout(nameAutoTimer);
         var phone = document.getElementById('custPhone');
         focusAndReveal(phone);
       }
+    });
+    // blur（フォーカスを失う）時にも保留中のタイマーをキャンセル → 意図しない遷移防止
+    nameInputForFocus.addEventListener('blur', function() {
+      clearTimeout(nameAutoTimer);
     });
   }
   // 電話番号入力 → コース選択へ
