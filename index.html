@@ -4096,12 +4096,15 @@ function renderStaffHistoryDetail() {
         if (seg.end) return '?-' + seg.end;
         return '';
       }).filter(Boolean).join(' / ');
-      const nightMin = (it.nightMinutes != null)
+      const rawNightMin = (it.nightMinutes != null)
         ? (parseInt(it.nightMinutes, 10) || 0)
         : calcNightMinutesFromSegments(it.segments || []);
+      // ★ Claude (2026-07-14): 未来の予定は「深夜時間」を予定として計上しない → 0h 表示。
+      //   実際に打刻された過去分だけを深夜時間としてカウント。
+      const nightMin = isPlanned ? 0 : rawNightMin;
       if (isPlanned) {
         plannedMin += it.totalMinutes || 0;
-        plannedNightMin += nightMin;
+        // plannedNightMin は加算しない（未来は 0h）
         plannedDays++;
       } else {
         totalMin += it.totalMinutes || 0;
