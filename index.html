@@ -1472,6 +1472,13 @@ select.time-select option:disabled { color: #aaa; }
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.takeout {
   background: #ffe0b2; color: #e65100; /* お土産=橙系 */
 }
+.cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.takeout-closed {
+  background: #d32f2f;
+  color: #fff;
+  border: 1px solid #b71c1c;
+  text-align: center;
+  letter-spacing: 0;
+}
 .cal-grid-wrap[data-mode="events"] .cal-day .cal-chip.cancelled {
   background: #eeeeee; color: #999; text-decoration: line-through;
 }
@@ -1895,7 +1902,11 @@ select.time-select option:disabled { color: #aaa; }
 <!-- お土産 Step T1: 受取時刻 -->
 <div class="card hidden" id="stepT1">
   <h2>🥡 お土産: 受取時刻</h2>
-  <div style="margin-bottom:10px;font-size:13px;color:var(--muted);">受取日: <strong id="takeoutDateDisplay"></strong></div>
+  <div style="margin-bottom:10px;font-size:13px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <span>受取日: <strong id="takeoutDateDisplay"></strong></span>
+    <button type="button" id="takeoutCloseToggleBtn" onclick="toggleTakeoutClosedForCurrentDate()" style="width:auto;margin:0;padding:6px 10px;border-radius:8px;border:1.5px solid #d32f2f;background:#ffebee;color:#c62828;font-size:12px;font-weight:800;font-family:inherit;">お土産終了</button>
+    <span id="takeoutClosedStatus" style="font-size:12px;font-weight:700;color:#c62828;"></span>
+  </div>
   <div class="time-grid" id="takeoutTimeGrid"></div>
   <div class="hint">タップして受取時刻を選択</div>
   <button class="secondary" onclick="cancelTakeoutFlow()" style="margin-top:14px">← 通常予約に戻る</button>
@@ -9308,6 +9319,74 @@ const TAKEOUT_TIME_SLOTS = (function() {
 // 各エントリ: { id, pid, name, option, price, qty, memo, isCustom }
 let takeoutState = { date: '', time: '', entries: [] };
 
+const TAKEOUT_CLOSED_DATES_KEY = 'takeout_closed_dates_v1';
+
+function _takeoutClosedMapKey(store, date) {
+  return (store || currentStore || 'torihashi') + '|' + date;
+}
+
+function loadTakeoutClosedDates() {
+  try {
+    const raw = localStorage.getItem(TAKEOUT_CLOSED_DATES_KEY);
+    const obj = raw ? JSON.parse(raw) : {};
+    return obj && typeof obj === 'object' ? obj : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveTakeoutClosedDates(map) {
+  try { localStorage.setItem(TAKEOUT_CLOSED_DATES_KEY, JSON.stringify(map || {})); } catch (e) {}
+}
+
+function isTakeoutClosedDate(date, store) {
+  if (!date) return false;
+  const map = loadTakeoutClosedDates();
+  return !!map[_takeoutClosedMapKey(store, date)];
+}
+
+function setTakeoutClosedDate(date, closed, store) {
+  if (!date) return;
+  const map = loadTakeoutClosedDates();
+  const key = _takeoutClosedMapKey(store, date);
+  if (closed) {
+    map[key] = { date: date, store: store || currentStore || 'torihashi', at: new Date().toISOString() };
+  } else {
+    delete map[key];
+  }
+  saveTakeoutClosedDates(map);
+}
+
+function renderTakeoutClosedStatus() {
+  const date = takeoutState && takeoutState.date;
+  const closed = isTakeoutClosedDate(date);
+  const btn = document.getElementById('takeoutCloseToggleBtn');
+  const status = document.getElementById('takeoutClosedStatus');
+  if (btn) {
+    btn.textContent = closed ? '受付再開' : 'お土産終了';
+    btn.style.background = closed ? '#e8f5e9' : '#ffebee';
+    btn.style.color = closed ? '#2e7d32' : '#c62828';
+    btn.style.borderColor = closed ? '#2e7d32' : '#d32f2f';
+  }
+  if (status) status.textContent = closed ? 'お土産終了中' : '';
+}
+
+function toggleTakeoutClosedForCurrentDate() {
+  const date = takeoutState && takeoutState.date;
+  if (!date) { alert('日付を選択してください'); return; }
+  const closed = isTakeoutClosedDate(date);
+  const nextClosed = !closed;
+  const msg = nextClosed
+    ? date + ' のお土産受付を終了します。カレンダーに「お土産終了」を表示しますか？'
+    : date + ' のお土産受付を再開しますか？';
+  if (!confirm(msg)) return;
+  setTakeoutClosedDate(date, nextClosed);
+  renderTakeoutClosedStatus();
+  renderTakeoutTimeGrid();
+  try { initAllCalendars(); } catch (e) {}
+  try { renderReservationList(); } catch (e) {}
+}
+
 function findEntry(pid, option) {
   return takeoutState.entries.find(function(e) {
     return e.pid === pid && (e.option || '') === (option || '') && !e.isCustom;
@@ -9382,24 +9461,8 @@ function startTakeoutFlow(dateOverride) {
   }
 
   document.getElementById('takeoutDateDisplay').textContent = date;
-
-  // 時刻グリッド生成
-  const grid = document.getElementById('takeoutTimeGrid');
-  grid.innerHTML = '';
-  TAKEOUT_TIME_SLOTS.forEach(function(t) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'time-btn ok';
-    btn.innerHTML = '<span>' + t + '</span><span class="slot-status">受取可</span>';
-    btn.addEventListener('click', function() {
-      document.querySelectorAll('#takeoutTimeGrid .time-btn').forEach(b => b.classList.remove('selected'));
-      btn.classList.add('selected');
-      takeoutState.time = t;
-      // 即座に商品選択画面へ
-      setTimeout(proceedToTakeoutProducts, 200);
-    });
-    grid.appendChild(btn);
-  });
+  renderTakeoutClosedStatus();
+  renderTakeoutTimeGrid();
 
   // 画面切替
   document.getElementById('step1').classList.add('hidden');
@@ -9409,6 +9472,32 @@ function startTakeoutFlow(dateOverride) {
   document.getElementById('stepT2').classList.add('hidden');
   document.getElementById('stepT3').classList.add('hidden');
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderTakeoutTimeGrid() {
+  const grid = document.getElementById('takeoutTimeGrid');
+  if (!grid) return;
+  const closed = isTakeoutClosedDate(takeoutState.date);
+  grid.innerHTML = '';
+  TAKEOUT_TIME_SLOTS.forEach(function(t) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'time-btn ' + (closed ? 'full' : 'ok');
+    btn.innerHTML = '<span>' + t + '</span><span class="slot-status">' + (closed ? '終了' : '受取可') + '</span>';
+    btn.disabled = closed;
+    btn.addEventListener('click', function() {
+      if (isTakeoutClosedDate(takeoutState.date)) {
+        alert('この日はお土産受付終了です。受付再開してから登録してください。');
+        return;
+      }
+      document.querySelectorAll('#takeoutTimeGrid .time-btn').forEach(b => b.classList.remove('selected'));
+      btn.classList.add('selected');
+      takeoutState.time = t;
+      // 即座に商品選択画面へ
+      setTimeout(proceedToTakeoutProducts, 200);
+    });
+    grid.appendChild(btn);
+  });
 }
 
 function quickNewTakeoutForDate(targetDate) {
@@ -10799,13 +10888,17 @@ function renderCalendarGrid(container, animDirection) {
     if (isEvents) {
       // 日付番号 + その日の予約チップ
       const dayList = monthRes[dateStr] || [];
-      const maxChips = 7; // 8個目以降は "+N" で集約
+      const hasTakeoutClosedSign = isTakeoutClosedDate(dateStr, currentStore);
+      const maxChips = hasTakeoutClosedSign ? 6 : 7; // 8個目以降は "+N" で集約
       const shown = dayList.slice(0, maxChips);
       const hidden = dayList.length - shown.length;
       // ★ Claude (2026-06-22): チップ表示順を「人数 / プラン / 名前 / 電話」に変更（下村店長要望）
       //   例: "8/飲放/ヤマダ様/09012345678"
       //   S/RSはプラン省略、電話番号は下4桁のみで省スペース化
       let chipsHtml = '';
+      if (hasTakeoutClosedSign) {
+        chipsHtml += '<div class="cal-chip takeout-closed" title="お土産受付終了">お土産終了</div>';
+      }
       shown.forEach(function(r) {
         let chipCls = 'cal-chip';
         if (r.status === 'cancelled')      chipCls += ' cancelled';
