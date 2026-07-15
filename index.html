@@ -5251,15 +5251,25 @@ function syncFromWebhook(callback) {
   ]).then(function(results) {
     const toriRes = results[0];
     const revoRes = results[1];
+    // ★ Claude (2026-07-14): お土産受付終了マーカーイベントは予約リストから除外
+    //   （マーカーはカレンダーチップ描画用の内部イベント。予約として扱わない）
+    const filterMarkers = function(items) {
+      return (items || []).filter(function(it) {
+        const t = String(it.title || '').trim();
+        return t.indexOf('🚫お土産終了') !== 0;
+      });
+    };
     let totalItems = [];
     let storesOk = 0;
     if (toriRes && toriRes.ok && Array.isArray(toriRes.items)) {
+      toriRes.items = filterMarkers(toriRes.items);
       // 念のためitemsにstoreを付与
       toriRes.items.forEach(function(it) { it.store = it.store || 'torihashi'; });
       totalItems = totalItems.concat(toriRes.items);
       storesOk++;
     }
     if (revoRes && revoRes.ok && Array.isArray(revoRes.items)) {
+      revoRes.items = filterMarkers(revoRes.items);
       revoRes.items.forEach(function(it) { it.store = it.store || 'revolverd'; });
       totalItems = totalItems.concat(revoRes.items);
       storesOk++;
@@ -9380,11 +9390,93 @@ function toggleTakeoutClosedForCurrentDate() {
     ? date + ' のお土産受付を終了します。カレンダーに「お土産終了」を表示しますか？'
     : date + ' のお土産受付を再開しますか？';
   if (!confirm(msg)) return;
+  // ローカル即反映（オプティミスティック）
   setTakeoutClosedDate(date, nextClosed);
   renderTakeoutClosedStatus();
   renderTakeoutTimeGrid();
   try { initAllCalendars(); } catch (e) {}
   try { renderReservationList(); } catch (e) {}
+  // ★ Claude (2026-07-14): バックエンド同期（Googleカレンダーにマーカー作成/削除）
+  _syncTakeoutClosedToBackend(date, nextClosed, currentStore).then(function(ok) {
+    if (!ok) {
+      alert('サーバー保存に失敗しました。他のデバイスに反映されない可能性があります。');
+      // 失敗時はローカルもロールバック
+      setTakeoutClosedDate(date, closed);
+      renderTakeoutClosedStatus();
+      renderTakeoutTimeGrid();
+      try { initAllCalendars(); } catch (e) {}
+    }
+  });
+}
+
+// ★ Claude (2026-07-14): バックエンドへの同期（Googleカレンダーマーカー作成/削除）
+function _syncTakeoutClosedToBackend(date, closed, store) {
+  return new Promise(function(resolve) {
+    if (!isWebhookConfigured()) { resolve(false); return; }
+    const url = WEBHOOK_URL
+      + '?action=setTakeoutClosed'
+      + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+      + '&store=' + encodeURIComponent(store || currentStore || 'torihashi')
+      + '&date=' + encodeURIComponent(date)
+      + '&closed=' + (closed ? 'true' : 'false');
+    fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+      resolve(!!(data && data.ok));
+    }).catch(function() { resolve(false); });
+  });
+}
+
+// ★ Claude (2026-07-14): バックエンドから終了日一覧を取得して localStorage を同期
+//   ページロード時と月変更時に呼ばれる。
+function _syncTakeoutClosedFromBackend(store, year, month) {
+  if (!isWebhookConfigured()) return Promise.resolve();
+  const url = WEBHOOK_URL
+    + '?action=listTakeoutClosedDates'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&store=' + encodeURIComponent(store || currentStore || 'torihashi')
+    + '&year=' + year
+    + '&month=' + month;
+  return fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    if (!data || !data.ok || !Array.isArray(data.dates)) return;
+    const useStore = store || currentStore || 'torihashi';
+    const map = loadTakeoutClosedDates();
+    // その店舗のその月分の既存エントリを一旦削除して、フレッシュデータで上書き
+    const keysToDelete = [];
+    Object.keys(map).forEach(function(k) {
+      // key = "store|date"
+      const parts = k.split('|');
+      if (parts.length !== 2) return;
+      if (parts[0] !== useStore) return;
+      const d = parts[1]; // YYYY-MM-DD
+      if (d.indexOf(year + '-' + String(month).padStart(2, '0') + '-') !== 0) return;
+      keysToDelete.push(k);
+    });
+    keysToDelete.forEach(function(k) { delete map[k]; });
+    // 新しいマーカーを追加
+    data.dates.forEach(function(date) {
+      map[useStore + '|' + date] = { date: date, store: useStore, at: new Date().toISOString(), fromBackend: true };
+    });
+    saveTakeoutClosedDates(map);
+    // カレンダー再描画
+    try { initAllCalendars(); } catch (e) {}
+    try { renderTakeoutTimeGrid(); } catch (e) {}
+    try { renderTakeoutClosedStatus(); } catch (e) {}
+  }).catch(function() {});
+}
+
+// ★ Claude (2026-07-14): renderCalendarGrid から呼ばれる。
+//   同じ月・同じ店舗の連続同期を30秒スロットル。events モードのみ。
+const _takeoutClosedSyncCache = {};
+function _maybeSyncTakeoutClosedForMonth(container, year, month) {
+  if (!container) return;
+  const mode = container.getAttribute && container.getAttribute('data-mode');
+  if (mode !== 'events') return;
+  const store = currentStore || 'torihashi';
+  const key = store + '|' + year + '-' + String(month).padStart(2, '0');
+  const now = Date.now();
+  const last = _takeoutClosedSyncCache[key];
+  if (last && (now - last) < 30000) return;
+  _takeoutClosedSyncCache[key] = now;
+  _syncTakeoutClosedFromBackend(store, year, month);
 }
 
 function findEntry(pid, option) {
@@ -10833,6 +10925,9 @@ function renderCalendarGrid(container, animDirection) {
   const firstDay = new Date(state.year, state.month, 1);
   const startDow = firstDay.getDay();
   const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
+
+  // ★ Claude (2026-07-14): お土産終了マーカーをバックエンドから同期（events モードのみ・30秒スロットル）
+  try { _maybeSyncTakeoutClosedForMonth(container, state.year, state.month + 1); } catch (e) {}
 
   // 祝日／休業日マップ（現店舗）
   const holMap = {};
