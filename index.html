@@ -6734,9 +6734,16 @@ function checkAvailability() {
   // 1. 営業日チェック（現店舗の休業日）→ 赤背景・日付＋休業のみ表示
   const holiday = getHolidays().find(h => h.date === date);
   if (holiday) {
+    // ★ Claude (2026-07-14): 管理者は「特別営業」で上書き可能なリンクを表示
+    const isAdmin = !!(currentUser && currentUser.isAdmin);
+    const overrideLink = isAdmin
+      ? '<div style="margin-top:8px;"><button type="button" onclick="_promptSpecialOpenFromReservation(\'' + date + '\')" style="padding:6px 12px;background:#1976d2;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-family:inherit;">👑 この日を特別営業日にする</button></div>'
+      : '';
     result.innerHTML = '<div class="result ng" style="text-align:center;">'
       + '<span class="result-date-big">' + _dateBigHtml + '</span>'
       + '<div style="font-size:15px;font-weight:700;margin-top:4px;">休業日</div>'
+      + '<div style="font-size:11px;color:var(--muted);margin-top:2px;">' + (holiday.reason || '') + '</div>'
+      + overrideLink
       + '</div>';
     return;
   }
@@ -9463,6 +9470,53 @@ function _syncTakeoutClosedFromBackend(store, year, month) {
   }).catch(function() {});
 }
 
+// ★ Claude (2026-07-14): 通常予約フローから特別営業日オーバーライドを起動
+function _promptSpecialOpenFromReservation(date) {
+  const msg = date + ' を「特別営業日」として登録しますか？\n\n'
+    + '（Googleカレンダーに「特別営業」イベントを作成し、全デバイスに営業日として反映されます）';
+  if (!confirm(msg)) return;
+  _setSpecialOpenAndProceed(date, function() {
+    // 通常予約の再判定を呼ぶ
+    try { checkAvailability && checkAvailability(); } catch (e) {}
+  });
+}
+
+// ★ Claude (2026-07-14): 特別営業日オーバーライド
+//   休業日として登録されている日を「特別営業」に上書きし、Googleカレンダーに反映。
+//   その後 HOLIDAYS_LIVE を再取得し、お土産フローを再開。
+function _setSpecialOpenAndProceed(date, onSuccess) {
+  if (!isWebhookConfigured()) {
+    alert('Webhook 未設定のため特別営業日を登録できません');
+    return;
+  }
+  const store = currentStore || 'torihashi';
+  const url = WEBHOOK_URL
+    + '?action=setSpecialOpen'
+    + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+    + '&store=' + encodeURIComponent(store)
+    + '&date=' + encodeURIComponent(date)
+    + '&open=true';
+  fetch(url).then(function(r) { return r.json(); }).then(function(data) {
+    if (data && data.ok) {
+      // 休業日リストを再取得 → カレンダー再描画 → お土産フロー再開
+      fetchHolidays(store, function() {
+        try { initAllCalendars(); } catch (e) {}
+        try { renderHolidays && renderHolidays(); } catch (e) {}
+        if (typeof onSuccess === 'function') {
+          onSuccess();
+        } else {
+          // デフォルトでお土産フローを再開
+          try { startTakeoutFlow(date); } catch (e) {}
+        }
+      });
+    } else {
+      alert('特別営業日の登録に失敗しました: ' + ((data && data.error) || '不明'));
+    }
+  }).catch(function(e) {
+    alert('通信エラー: ' + String(e));
+  });
+}
+
 // ★ Claude (2026-07-14): renderCalendarGrid から呼ばれる。
 //   同じ月・同じ店舗の連続同期を30秒スロットル。events モードのみ。
 const _takeoutClosedSyncCache = {};
@@ -9545,11 +9599,23 @@ function startTakeoutFlow(dateOverride) {
   takeoutState.time = '';
   takeoutState.entries = [];
 
-  // 営業日チェック
-  const holiday = HOLIDAYS.find(h => h.date === date);
+  // 営業日チェック（HOLIDAYS_LIVEを優先）
+  const holiday = getHolidays().find(h => h.date === date);
   if (holiday) {
-    alert(date + ' は休業日（' + holiday.reason + '）です。別日でお願いします');
-    return;
+    // ★ Claude (2026-07-14): 管理者は「特別営業」でその日を上書きしてお土産受付可能
+    const isAdmin = !!(currentUser && currentUser.isAdmin);
+    if (isAdmin) {
+      const msg = date + ' は休業日（' + holiday.reason + '）です。\n\n'
+        + '👑 管理者権限で「特別営業日」として登録して注文を進めますか？\n'
+        + '（Googleカレンダーに「特別営業」イベントを作成し、全デバイスに営業日として反映されます）';
+      if (confirm(msg)) {
+        _setSpecialOpenAndProceed(date);
+      }
+      return;
+    } else {
+      alert(date + ' は休業日（' + holiday.reason + '）です。別日でお願いします');
+      return;
+    }
   }
 
   document.getElementById('takeoutDateDisplay').textContent = date;
