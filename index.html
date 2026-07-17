@@ -341,9 +341,16 @@ button.secondary:active { background: var(--primary); color: white; }
   padding: 1px 6px; border-radius: 8px;
   flex-shrink: 0; white-space: nowrap;
 }
-/* ★ Claude (2026-07-14): 料理バッジの色を席のみ(ティール系)と明確に区別できる濃いピンク/マゼンタに変更 */
-.ri-summary .ri-course-mini.meal { background: #f8bbd0; color: #880e4f; border: 1px solid #ec407a; }
-.ri-summary .ri-course-mini.drink { background: #fff3e0; color: #e65100; border: 1px solid #ffb74d; }
+/* ★ Claude (2026-07-14): 5カテゴリ全てを明確に区別できる配色に整理
+ *   料理 → 黄／アンバー系（食欲/食べ物のイメージ）
+ *   飲放 → 濃いピンク／マゼンタ（旧・料理のダーク色）
+ *   お土産 → オレンジ（旧・飲放）※ .takeout クラスに分離
+ *   プレミ → パープル
+ *   席のみ → ティール（薄い青緑）
+ */
+.ri-summary .ri-course-mini.meal { background: #fff59d; color: #f57f17; border: 1px solid #fbc02d; }
+.ri-summary .ri-course-mini.drink { background: #f8bbd0; color: #880e4f; border: 1px solid #ec407a; }
+.ri-summary .ri-course-mini.takeout { background: #fff3e0; color: #e65100; border: 1px solid #ffb74d; }
 .ri-summary .ri-course-mini.premium { background: #ede7f6; color: #4527a0; border: 1px solid #b39ddb; }
 .ri-summary .ri-course-mini.seat-only { background: #e0f2f1; color: #00695c; border: 1px solid #80cbc4; }
 /* お土産用：商品情報を1行内に */
@@ -10342,7 +10349,7 @@ function renderReservationList() {
           +     '<span class="ri-people">' + (r.count || 0) + '点</span>'
           +     '<span class="ri-name">' + r.name + '様</span>'
           +     '<span class="ri-takeout-info">' + firstItems + '</span>'
-          +     '<span class="ri-course-mini drink">' + (r.total || 0).toLocaleString() + '円</span>'
+          +     '<span class="ri-course-mini takeout">' + (r.total || 0).toLocaleString() + '円</span>'
           +     notesIcon
           +     statusTag
           +     '<span class="ri-expand">▾</span>'
