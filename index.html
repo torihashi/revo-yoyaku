@@ -2239,6 +2239,28 @@ select.time-select option:disabled { color: #aaa; }
     <div id="holidayDisplay"></div>
   </div>
 
+  <!-- ★ Claude (2026-07-14): localStorage 使用状況モニタ（全員閲覧可・管理者のみクリーンアップ操作可）
+       iOS PWA は localStorage が 5〜10MB に制限され、超えると保存失敗や古データ消失のリスク。 -->
+  <div class="card" id="storageMonitorCard">
+    <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
+      <span>💾 ストレージ使用状況</span>
+      <button type="button" onclick="renderStorageMonitor()" style="font-size:12px;padding:6px 12px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 更新</button>
+    </h2>
+    <div id="storageMonitorDisplay" style="font-size:12px;line-height:1.6;">
+      読み込み中...
+    </div>
+    <div id="storageMonitorAdminActions" class="hidden" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border);">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">🧹 手動クリーンアップ（管理者のみ）</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+        <button type="button" onclick="cleanupOldReservations(180)" style="padding:8px;font-size:11px;background:#fff3e0;color:#e65100;border:1px solid #ffb74d;border-radius:6px;cursor:pointer;font-family:inherit;">🗑 180日以上前の予約を削除</button>
+        <button type="button" onclick="cleanupOldHandwriting(90)" style="padding:8px;font-size:11px;background:#e3f2fd;color:#1565c0;border:1px solid #64b5f6;border-radius:6px;cursor:pointer;font-family:inherit;">🖼 90日以上前の手書きメモを削除</button>
+        <button type="button" onclick="cleanupStaleCaches()" style="padding:8px;font-size:11px;background:#f3e5f5;color:#6a1b9a;border:1px solid #ba68c8;border-radius:6px;cursor:pointer;font-family:inherit;">🗂 各種キャッシュをクリア</button>
+        <button type="button" onclick="cleanupAll()" style="padding:8px;font-size:11px;background:#ffebee;color:#c62828;border:1px solid #ef5350;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:700;">🧹 まとめて全部整理</button>
+      </div>
+      <div id="cleanupResult" style="margin-top:8px;font-size:11px;text-align:center;"></div>
+    </div>
+  </div>
+
   <!-- ★ Claude (2026-06-22): 幽霊予約クリーンアップ（管理者のみ表示）
        GCalへの同期に失敗してlocalStorageだけに残った予約を、管理者が個別確認のうえ削除する。
        自動削除はしない（誤削除リスク回避） -->
@@ -6280,11 +6302,187 @@ function saveReservations() {
   // 200msデバウンス：連続操作時の I/O 削減
   if (_saveTimer) clearTimeout(_saveTimer);
   _saveTimer = setTimeout(function() {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations)); } catch (e) {}
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(reservations));
+    } catch (e) {
+      // ★ Claude (2026-07-14): 容量オーバー警告
+      if (e && (e.name === 'QuotaExceededError' || (e.message || '').indexOf('quota') >= 0)) {
+        console.error('⚠️ localStorage容量オーバー:', e);
+        try {
+          alert('⚠ 端末の保存容量が不足しています。\n\n席情報タブ → ストレージ使用状況 → 「まとめて全部整理」から古いデータを整理してください。');
+        } catch (_e) {}
+      }
+    }
     _saveTimer = null;
   }, 200);
   // ★ データに変更があったので、一覧と座席表の両方を即時再描画（リアルタイム同期）
   refreshAllReservationViews();
+}
+
+// ============================================================
+// ★ Claude (2026-07-14): localStorage 使用状況モニタ & クリーンアップ
+// ============================================================
+
+// localStorage の全キーごとのサイズを取得
+function getLocalStorageUsage() {
+  const result = { keys: [], totalBytes: 0 };
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      const value = localStorage.getItem(key) || '';
+      // UTF-16 で 1文字 2バイト（近似）
+      const bytes = (key.length + value.length) * 2;
+      result.keys.push({ key: key, bytes: bytes, valueLength: value.length });
+      result.totalBytes += bytes;
+    }
+    result.keys.sort(function(a, b) { return b.bytes - a.bytes; });
+  } catch (e) {}
+  return result;
+}
+
+// バイト表示ヘルパー
+function _formatBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1024 / 1024).toFixed(2) + ' MB';
+}
+
+// ストレージモニタ画面の描画
+function renderStorageMonitor() {
+  const el = document.getElementById('storageMonitorDisplay');
+  const adminEl = document.getElementById('storageMonitorAdminActions');
+  if (!el) return;
+  const usage = getLocalStorageUsage();
+  const totalMB = usage.totalBytes / 1024 / 1024;
+  // iOS PWA の目安: 5MB を警告ライン、10MB を危険ライン
+  const warnMB = 5;
+  const dangerMB = 8;
+  const ratio = Math.min(totalMB / dangerMB, 1);
+  const barColor = totalMB >= dangerMB ? '#c62828' : totalMB >= warnMB ? '#e65100' : '#2e7d32';
+  const statusText = totalMB >= dangerMB ? '⚠ 危険（クリーンアップ推奨）'
+                    : totalMB >= warnMB  ? '⚠ 警告（注意）'
+                    : '✓ 余裕あり';
+
+  // トップ5のキー内訳
+  const top5 = usage.keys.slice(0, 5).map(function(k) {
+    const shortKey = k.key.length > 40 ? k.key.substring(0, 37) + '...' : k.key;
+    return '<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px dotted #eee;font-family:monospace;font-size:11px;">'
+      + '<span>' + shortKey + '</span>'
+      + '<span style="color:' + (k.bytes > 500000 ? '#c62828' : '#666') + ';font-weight:600;">' + _formatBytes(k.bytes) + '</span>'
+      + '</div>';
+  }).join('');
+
+  el.innerHTML = ''
+    + '<div style="background:' + barColor + '20;padding:10px;border-radius:6px;margin-bottom:8px;">'
+    +   '<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:' + barColor + ';">'
+    +     '<span>合計使用量</span><span>' + _formatBytes(usage.totalBytes) + '</span>'
+    +   '</div>'
+    +   '<div style="height:8px;background:#e0e0e0;border-radius:4px;margin-top:6px;overflow:hidden;">'
+    +     '<div style="height:100%;width:' + (ratio * 100).toFixed(0) + '%;background:' + barColor + ';transition:width 0.3s;"></div>'
+    +   '</div>'
+    +   '<div style="font-size:11px;color:' + barColor + ';margin-top:4px;">' + statusText + ' / 目安上限 8MB</div>'
+    + '</div>'
+    + '<div style="font-size:11px;font-weight:700;margin-bottom:4px;">📊 上位5項目</div>'
+    + top5
+    + '<div style="font-size:11px;color:var(--muted);margin-top:8px;">キー総数: ' + usage.keys.length + ' 個</div>';
+
+  // 管理者のみクリーンアップUI表示
+  if (adminEl) {
+    if (currentUser && currentUser.isAdmin) {
+      adminEl.classList.remove('hidden');
+    } else {
+      adminEl.classList.add('hidden');
+    }
+  }
+}
+
+// 古い予約を削除（指定日以上前）
+function cleanupOldReservations(daysAgo) {
+  const cutoff = Date.now() - daysAgo * 24 * 60 * 60 * 1000;
+  const before = reservations.length;
+  reservations = reservations.filter(function(r) {
+    if (!r || !r.date) return true;
+    const d = new Date(r.date + 'T00:00:00');
+    if (isNaN(d.getTime())) return true;
+    // 対象日 + 予約日そのものが未来 なら残す
+    if (d.getTime() >= cutoff) return true;
+    return false;
+  });
+  const removed = before - reservations.length;
+  try { saveReservations(); } catch (e) {}
+  const msg = '✓ ' + daysAgo + '日以上前の予約 ' + removed + '件を削除しました';
+  _showCleanupResult(msg, '#2e7d32');
+  renderStorageMonitor();
+  return removed;
+}
+
+// 古い手書きメモ画像を削除（予約は残す）
+function cleanupOldHandwriting(daysAgo) {
+  const cutoff = Date.now() - daysAgo * 24 * 60 * 60 * 1000;
+  let removed = 0;
+  reservations.forEach(function(r) {
+    if (!r) return;
+    if (!r.handwriting) return;
+    const rDate = r.date ? new Date(r.date + 'T00:00:00') : null;
+    const rTs = rDate && !isNaN(rDate.getTime()) ? rDate.getTime() : r.createdAt;
+    if (rTs && rTs < cutoff) {
+      delete r.handwriting;
+      removed++;
+    }
+  });
+  try { saveReservations(); } catch (e) {}
+  const msg = '✓ ' + daysAgo + '日以上前の手書きメモ ' + removed + '件を削除しました';
+  _showCleanupResult(msg, '#1565c0');
+  renderStorageMonitor();
+  return removed;
+}
+
+// 各種キャッシュをクリア
+function cleanupStaleCaches() {
+  let removedCount = 0;
+  const cachePatterns = [
+    'staffMonthCache::',      // スタッフ月別シフトキャッシュ
+    '_staffSchedCache',        // スタッフスケジュールキャッシュ
+    'torihashi_holiday_cache_v1',  // 休業日キャッシュ（次回起動時に再取得される）
+  ];
+  try {
+    const toRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k) continue;
+      for (let j = 0; j < cachePatterns.length; j++) {
+        if (k.indexOf(cachePatterns[j]) >= 0) {
+          toRemove.push(k);
+          break;
+        }
+      }
+    }
+    toRemove.forEach(function(k) {
+      localStorage.removeItem(k);
+      removedCount++;
+    });
+  } catch (e) {}
+  _showCleanupResult('✓ キャッシュ ' + removedCount + ' 件を削除しました', '#6a1b9a');
+  renderStorageMonitor();
+  return removedCount;
+}
+
+// まとめて全部整理（180日以上前予約 + 90日以上前手書き + 各種キャッシュ）
+function cleanupAll() {
+  if (!confirm('以下を実行します:\n\n・180日以上前の予約を削除\n・90日以上前の手書きメモを削除\n・各種キャッシュをクリア\n\n実行しますか？')) return;
+  const r1 = cleanupOldReservations(180);
+  const r2 = cleanupOldHandwriting(90);
+  const r3 = cleanupStaleCaches();
+  _showCleanupResult('✓ 完了: 予約' + r1 + '件 / 手書き' + r2 + '件 / キャッシュ' + r3 + '件を削除', '#c62828');
+  renderStorageMonitor();
+}
+
+function _showCleanupResult(msg, color) {
+  const el = document.getElementById('cleanupResult');
+  if (!el) return;
+  el.style.color = color;
+  el.textContent = msg;
+  setTimeout(function() { el.textContent = ''; }, 8000);
 }
 // アプリ離脱時は確実に保存
 window.addEventListener('beforeunload', function() {
@@ -6662,6 +6860,8 @@ function switchTab(name) {
       // ★ Claude (2026-07-08): Discord通知テストカードも管理者のみ表示
       const dc = document.getElementById('discordTestCard');
       if (dc) dc.classList.toggle('hidden', !isAdmin);
+      // ★ Claude (2026-07-14): ストレージ使用状況を描画
+      try { renderStorageMonitor(); } catch (e) {}
       // 商品マスタの最終取得時刻を表示
       try {
         const statusEl = document.getElementById('productLoadStatus');
