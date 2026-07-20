@@ -962,6 +962,20 @@ button.secondary:active { background: var(--primary); color: white; }
   border-color: #ff9800 !important;
   box-shadow: 0 0 0 1.5px #ff9800 inset;
 }
+/* ★ Claude (2026-07-14): シフト追加用に選択された日付（🎯 モード時） */
+.staff-month-grid .smc-day.shift-selected {
+  background: #fff8e1 !important;
+  border-color: #f9a825 !important;
+  box-shadow: 0 0 0 2.5px #f9a825 inset;
+  position: relative;
+}
+.staff-month-grid .smc-day.shift-selected::after {
+  content: '🎯';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  font-size: 11px;
+}
 .staff-month-grid .smc-day.blank {
   background: #fcfcfc;
   border-color: #f0f0f0;
@@ -2139,11 +2153,14 @@ select.time-select option:disabled { color: #aaa; }
 <section id="tab-staff" class="hidden">
   <div class="card">
     <!-- ★ Claude (2026-06-22): シフト追加ボタン隣に「予約情報を重ねる」トグル追加。
-         ON/OFFの文字数差で隣のボタン幅が変わるので、固定幅+小フォントで安定化。 -->
+         ★ Claude (2026-07-14): 「🎯 日付選択モード」トグルを追加。ONで月間カレンダーの日付を複数選択可能。 -->
     <div style="display:flex;gap:8px;align-items:stretch;margin-bottom:10px;">
-      <button class="primary" style="flex:1;margin:0;" onclick="openStaffShiftModal()">＋ シフト追加（複数日対応）</button>
+      <button class="primary" style="flex:1;margin:0;" onclick="openStaffShiftModal()">＋ シフト追加</button>
+      <button type="button" id="staffShiftDateModeBtn" class="secondary" onclick="toggleShiftDateSelectMode()" style="flex:0 0 92px;width:92px;box-sizing:border-box;margin:0;padding:8px 4px;font-size:10.5px;line-height:1.25;text-align:center;">🎯 日付選択<br>OFF</button>
       <button type="button" id="staffShowResBtn" class="secondary" onclick="toggleStaffShowReservations()" style="flex:0 0 92px;width:92px;box-sizing:border-box;margin:0;padding:8px 4px;font-size:10.5px;line-height:1.25;text-align:center;">📋 予約表示<br>OFF</button>
     </div>
+    <!-- ★ Claude (2026-07-14): シフト追加用に選択された日付をチップ表示 -->
+    <div id="shiftAddDatesChips" style="display:none;padding:8px;background:#fff8e1;border-radius:6px;margin-bottom:8px;font-size:12px;"></div>
 
     <!-- 月間カレンダー（出勤・休みを日ごとに俯瞰） -->
     <div class="staff-month-section" style="margin-top:14px;">
@@ -3374,6 +3391,80 @@ function changeStaffMonthCal(delta) {
   renderStaffMonthCal();
 }
 
+// ★ Claude (2026-07-14): シフト追加用の日付選択モード
+//   ON: 月間カレンダーのタップで日付を複数選択（シフト追加用）
+//   OFF: 月間カレンダーのタップで日別詳細を表示（従来動作）
+let _shiftDateSelectMode = false;
+const _shiftAddSelectedDates = new Set();
+
+function toggleShiftDateSelectMode() {
+  _shiftDateSelectMode = !_shiftDateSelectMode;
+  const btn = document.getElementById('staffShiftDateModeBtn');
+  if (btn) {
+    btn.innerHTML = '🎯 日付選択<br>' + (_shiftDateSelectMode ? 'ON' : 'OFF');
+    btn.style.background = _shiftDateSelectMode ? '#f9a825' : '';
+    btn.style.color = _shiftDateSelectMode ? '#fff' : '';
+    btn.style.borderColor = _shiftDateSelectMode ? '#f57f17' : '';
+  }
+  // モードOFF時は選択をクリア
+  if (!_shiftDateSelectMode) {
+    _shiftAddSelectedDates.clear();
+  }
+  renderShiftAddDatesChips();
+  // カレンダー再描画（選択状態の視覚更新）
+  try {
+    const key = _monthCalKey();
+    if (_staffMonthCalCache[key]) _drawStaffMonthCal(_staffMonthCalCache[key].byDate);
+  } catch (e) {}
+}
+
+function renderShiftAddDatesChips() {
+  const wrap = document.getElementById('shiftAddDatesChips');
+  if (!wrap) return;
+  if (_shiftAddSelectedDates.size === 0) {
+    if (_shiftDateSelectMode) {
+      wrap.style.display = 'block';
+      wrap.innerHTML = '<span style="color:#f57f17;font-weight:700;">🎯 選択モードON</span> <span style="color:var(--muted);">：月間カレンダーで日付をタップ／もう一度タップで解除</span>';
+    } else {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+    }
+    return;
+  }
+  const wd = ['日','月','火','水','木','金','土'];
+  const sorted = Array.from(_shiftAddSelectedDates).sort();
+  const chips = sorted.map(function(d) {
+    const dt = new Date(d + 'T00:00:00');
+    const dow = wd[dt.getDay()];
+    const label = (dt.getMonth()+1) + '/' + dt.getDate() + '（' + dow + '）';
+    const colorCls = dt.getDay() === 0 ? 'sun' : dt.getDay() === 6 ? 'sat' : '';
+    return '<span class="shift-date-chip ' + colorCls + '" data-date="' + d + '" title="タップで解除">' + label + ' ✕</span>';
+  }).join('');
+  wrap.style.display = 'block';
+  wrap.innerHTML = '<div style="font-weight:700;color:#e65100;margin-bottom:4px;">🎯 選択中の日付（' + sorted.length + '日）</div>'
+    + '<div style="display:flex;flex-wrap:wrap;gap:5px;">' + chips + '</div>'
+    + '<button type="button" onclick="clearShiftAddDates()" style="margin-top:6px;font-size:11px;padding:4px 10px;border:1px solid #d32f2f;background:#ffebee;color:#c62828;border-radius:6px;cursor:pointer;font-family:inherit;">全て解除</button>';
+  wrap.querySelectorAll('.shift-date-chip').forEach(function(c) {
+    c.addEventListener('click', function() {
+      _shiftAddSelectedDates.delete(c.getAttribute('data-date'));
+      renderShiftAddDatesChips();
+      try {
+        const key = _monthCalKey();
+        if (_staffMonthCalCache[key]) _drawStaffMonthCal(_staffMonthCalCache[key].byDate);
+      } catch (e) {}
+    });
+  });
+}
+
+function clearShiftAddDates() {
+  _shiftAddSelectedDates.clear();
+  renderShiftAddDatesChips();
+  try {
+    const key = _monthCalKey();
+    if (_staffMonthCalCache[key]) _drawStaffMonthCal(_staffMonthCalCache[key].byDate);
+  } catch (e) {}
+}
+
 // ★ Claude (2026-06-22): 予約情報表示のON/OFF切替
 let _staffShowReservations = false;
 function toggleStaffShowReservations() {
@@ -3515,6 +3606,8 @@ function _drawStaffMonthCal(byDate) {
     if (dow === 6) cls += ' sat';
     if (dateStr === todayStrLocal) cls += ' today';
     if (_staffMonthCalState.selectedDate === dateStr) cls += ' selected';
+    // ★ Claude (2026-07-14): シフト追加用に選択された日付は特別マーク
+    if (_shiftAddSelectedDates && _shiftAddSelectedDates.has(dateStr)) cls += ' shift-selected';
     const items = byDate[dateStr] || [];
     // 営業カレンダーの店舗休業日
     const bizHoliday = holMap[dateStr];
@@ -3570,9 +3663,21 @@ function _drawStaffMonthCal(byDate) {
   grid.innerHTML = html;
   grid.querySelectorAll('.smc-day[data-date]').forEach(function(dayEl) {
     dayEl.addEventListener('click', function() {
-      _staffMonthCalState.selectedDate = dayEl.getAttribute('data-date') || '';
-      _drawStaffMonthCal(byDate);
-      scrollAfterCalendarDateTap('staffMonthCalGrid');
+      const dateStr = dayEl.getAttribute('data-date') || '';
+      if (!dateStr) return;
+      // ★ Claude (2026-07-14): モードに応じて挙動を分岐
+      if (_shiftDateSelectMode) {
+        // 日付選択モード: シフト追加用に選択トグル
+        if (_shiftAddSelectedDates.has(dateStr)) _shiftAddSelectedDates.delete(dateStr);
+        else _shiftAddSelectedDates.add(dateStr);
+        renderShiftAddDatesChips();
+        _drawStaffMonthCal(byDate);
+      } else {
+        // 従来動作: 日別詳細表示
+        _staffMonthCalState.selectedDate = dateStr;
+        _drawStaffMonthCal(byDate);
+        scrollAfterCalendarDateTap('staffMonthCalGrid');
+      }
     });
   });
   bindStaffMonthSwipe(grid);
@@ -4668,8 +4773,9 @@ function preloadHolidays() {
 }
 
 // シフト追加モーダル
+// ★ Claude (2026-07-14): 内部カレンダーを廃止。日付は外側の月間カレンダー
+//   （🎯 日付選択モードで選択）または現在の選択日から取得する。
 function openStaffShiftModal() {
-  const date = smState.date || todayStr();
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
 
@@ -4689,7 +4795,6 @@ function openStaffShiftModal() {
   }
 
   // キャッシュがあればその時点でプルダウンの初期HTMLに反映（読み込み中表示を回避）
-  // ない場合は即座にプリロードを発火（既に進行中なら無視される）
   if (typeof preloadEmployees === 'function') {
     try { preloadEmployees(); } catch (e) {}
   }
@@ -4700,15 +4805,44 @@ function openStaffShiftModal() {
       }).join('')
     : '<option value="">初回のみ読み込み中（数秒）...</option>';
 
+  // ★ Claude (2026-07-14): 日付の取得優先順位
+  //   1. _shiftAddSelectedDates（🎯モードで選択された複数日）
+  //   2. _staffMonthCalState.selectedDate（従来の単一選択日）
+  //   3. なし → エラー表示
+  const selectedDatesList = Array.from(_shiftAddSelectedDates).sort();
+  const singleSelected = (selectedDatesList.length === 0 && _staffMonthCalState.selectedDate)
+    ? _staffMonthCalState.selectedDate : null;
+  const targetDates = selectedDatesList.length > 0 ? selectedDatesList
+                     : singleSelected ? [singleSelected] : [];
+
+  // 対象日の表示用HTML
+  const wd = ['日','月','火','水','木','金','土'];
+  let targetDatesHtml = '';
+  if (targetDates.length === 0) {
+    targetDatesHtml = '<div style="padding:12px;background:#ffebee;color:#c62828;border-radius:6px;font-size:12px;text-align:center;font-weight:700;">'
+      + '⚠ 対象日が未選択です<br>'
+      + '<span style="font-weight:400;font-size:11px;">キャンセルして、まず 🎯 日付選択モードON にしてから月間カレンダーで日付をタップしてください</span>'
+      + '</div>';
+  } else {
+    const chips = targetDates.map(function(d) {
+      const dt = new Date(d + 'T00:00:00');
+      const dow = wd[dt.getDay()];
+      const colorCls = dt.getDay() === 0 ? 'sun' : dt.getDay() === 6 ? 'sat' : '';
+      const label = (dt.getMonth()+1) + '/' + dt.getDate() + '（' + dow + '）';
+      return '<span class="shift-date-chip ' + colorCls + '" style="cursor:default;">' + label + '</span>';
+    }).join('');
+    targetDatesHtml = '<div style="padding:8px 10px;background:#fff8e1;border:1.5px solid #f9a825;border-radius:8px;">'
+      + '<div style="font-size:11px;font-weight:700;color:#e65100;margin-bottom:5px;">対象日（' + targetDates.length + '日）</div>'
+      + '<div style="display:flex;flex-wrap:wrap;gap:5px;">' + chips + '</div>'
+      + '</div>';
+  }
+
   overlay.innerHTML =
     '<div class="modal" style="max-width:460px">'
     + '<h3>シフト追加 / 不可登録（' + getStoreLabel() + '）</h3>'
-    // 対象日（複数選択）
-    + '<div class="field" style="margin-bottom:8px">'
-    +   '<label>対象日（複数選択可）<span class="req">*</span></label>'
-    +   '<div id="shiftSelectedDates" style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;min-height:28px;"></div>'
-    +   '<div id="shiftCalGrid" class="cal-grid-wrap" data-multi="1"></div>'
-    +   '<div class="hint">カレンダーの日付をタップで選択／解除（複数日OK）</div>'
+    // 対象日（表示専用）
+    + '<div class="field" style="margin-bottom:10px">'
+    +   targetDatesHtml
     + '</div>'
     // 種類トグル
     + '<div class="field" style="margin-bottom:8px">'
@@ -4740,92 +4874,8 @@ function openStaffShiftModal() {
     + '</div>';
   document.body.appendChild(overlay);
 
-  // ===== 複数日選択ロジック =====
-  // 初期は何も選択しない（ユーザーがカレンダーから明示的に選ぶ）
-  const selectedDates = new Set();
-
-  function renderSelectedChips() {
-    const wrap = document.getElementById('shiftSelectedDates');
-    if (!wrap) return;
-    if (selectedDates.size === 0) {
-      wrap.innerHTML = '<span style="font-size:11px;color:var(--muted);">日付を1つ以上選んでください</span>';
-      return;
-    }
-    const wd = ['日','月','火','水','木','金','土'];
-    const sorted = Array.from(selectedDates).sort();
-    wrap.innerHTML = sorted.map(function(d) {
-      const dt = new Date(d + 'T00:00:00');
-      const dow = wd[dt.getDay()];
-      const label = (dt.getMonth()+1) + '/' + dt.getDate() + '（' + dow + '）';
-      const colorCls = dt.getDay() === 0 ? 'sun' : dt.getDay() === 6 ? 'sat' : '';
-      return '<span class="shift-date-chip ' + colorCls + '" data-date="' + d + '" title="クリックで解除">' + label + ' ✕</span>';
-    }).join('');
-    wrap.querySelectorAll('.shift-date-chip').forEach(function(c) {
-      c.addEventListener('click', function() {
-        selectedDates.delete(c.getAttribute('data-date'));
-        renderSelectedChips();
-        renderMultiCal();
-      });
-    });
-  }
-
-  function renderMultiCal() {
-    const container = document.getElementById('shiftCalGrid');
-    if (!container) return;
-    const todayD = new Date();
-    if (!container._calState) {
-      container._calState = { year: todayD.getFullYear(), month: todayD.getMonth() };
-    }
-    const state = container._calState;
-    const todayStrLocal = todayD.getFullYear() + '-' + String(todayD.getMonth()+1).padStart(2,'0') + '-' + String(todayD.getDate()).padStart(2,'0');
-    const firstDay = new Date(state.year, state.month, 1);
-    const startDow = firstDay.getDay();
-    const daysInMonth = new Date(state.year, state.month + 1, 0).getDate();
-    let html = '<div class="cal-header">'
-      + '<button type="button" class="cal-nav" data-nav="-1">‹</button>'
-      + '<span class="cal-title">' + state.year + '年 ' + (state.month + 1) + '月</span>'
-      + '<button type="button" class="cal-nav" data-nav="+1">›</button>'
-      + '</div>'
-      + '<div class="cal-grid">';
-    ['日','月','火','水','木','金','土'].forEach(function(d, i) {
-      const cls = i === 0 ? 'cal-dow sun' : i === 6 ? 'cal-dow sat' : 'cal-dow';
-      html += '<div class="' + cls + '">' + d + '</div>';
-    });
-    for (let i = 0; i < startDow; i++) html += '<div class="cal-day-blank"></div>';
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = state.year + '-' + String(state.month + 1).padStart(2,'0') + '-' + String(d).padStart(2,'0');
-      const dow = new Date(state.year, state.month, d).getDay();
-      let cls = 'cal-day';
-      if (dateStr === todayStrLocal) cls += ' today';
-      if (selectedDates.has(dateStr)) cls += ' selected';
-      if (dow === 0) cls += ' sun';
-      if (dow === 6) cls += ' sat';
-      html += '<button type="button" class="' + cls + '" data-date="' + dateStr + '">' + d + '</button>';
-    }
-    html += '</div>';
-    container.innerHTML = html;
-    container.querySelectorAll('.cal-nav').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        const delta = parseInt(btn.getAttribute('data-nav'), 10);
-        state.month += delta;
-        if (state.month < 0) { state.month = 11; state.year--; }
-        if (state.month > 11) { state.month = 0; state.year++; }
-        renderMultiCal();
-      });
-    });
-    container.querySelectorAll('.cal-day').forEach(function(btn) {
-      btn.addEventListener('click', function() {
-        const d = btn.getAttribute('data-date');
-        if (selectedDates.has(d)) selectedDates.delete(d);
-        else selectedDates.add(d);
-        renderSelectedChips();
-        renderMultiCal();
-      });
-    });
-  }
-
-  renderSelectedChips();
-  renderMultiCal();
+  // ★ Claude (2026-07-14): 外側カレンダーで選ばれた日付をそのまま使う（内部カレンダー廃止）
+  const selectedDates = new Set(targetDates);
 
   // 不可・公休リスト（その日 ❌/🏖 登録された人）
   let unavSet = {};
@@ -4858,7 +4908,9 @@ function openStaffShiftModal() {
   fetchEmployees(currentStore, renderEmployeeOptions);
 
   // ② その日のシフト一覧を裏で取得 → ❌/🏖 マークを更新
-  fetchStaffSchedule(date, currentStore, function(items) {
+  // ★ Claude (2026-07-14): 選択日の1日目を代表としてフェッチ（複数日選択でも1回のフェッチで十分）
+  const scheduleDate = targetDates.length > 0 ? targetDates[0] : (smState.date || todayStr());
+  fetchStaffSchedule(scheduleDate, currentStore, function(items) {
     unavSet = {};
     kouSet = {};
     (items || []).forEach(function(s) {
@@ -4991,6 +5043,11 @@ function openStaffShiftModal() {
 
     Promise.all(promises).then(function() {
       try { renderStaffRail(); } catch (e) {}
+      // ★ Claude (2026-07-14): 登録完了で🎯選択日をクリア（連続登録を防止）
+      try {
+        _shiftAddSelectedDates.clear();
+        renderShiftAddDatesChips();
+      } catch (e) {}
       // ★ サーバー結果を取りに行ってキャッシュ更新＋月間カレンダーを最新化
       try {
         // 関連月だけキャッシュを無効化して renderStaffMonthCal で再フェッチ
