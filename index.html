@@ -5681,6 +5681,12 @@ function mergeFromCalendar(items) {
                   + String(evStart.getMinutes()).padStart(2,'0');
 
     if (existing) {
+      // ★ Claude (2026-07-14): ローカル編集が同期待ち（_needsGcalUpdate）なら、GCal 側の古いデータで上書きしない。
+      //   ただしキャンセル状態の反映は例外（[キャンセル] タイトルは尊重する）。
+      if (existing._needsGcalUpdate && !titleCancelled) {
+        // pending edit を守る → 何もしない（キャンセル判定のみ後続で行う）
+        return;
+      }
       let changed = false;
       // 店舗情報（既存予約に未設定なら同期データで補完）
       if (ev.store && !existing.store) {
@@ -7464,16 +7470,20 @@ function openGhostCleanupModal() {
 // ★ Claude (2026-06-22): 起動時＆オンライン復帰時の自動リトライ。
 //   `_needsGcalResend: true` または「PWA作成後10分経ってgcalEventIdが無い」予約を対象に
 //   静かに送信し直す。成功したらフラグ解除。失敗はまた次回リトライ。
+// ★ Claude (2026-07-14): 編集同期失敗（_needsGcalUpdate + gcalEventId 有り）も自動リトライ対象に追加。
+//   → 編集後にネットワーク切断/GAS異常でも、次回オンライン時に自動で反映される。
 async function _autoRetryGhostReservations() {
   if (!isWebhookConfigured()) return;
   if (!navigator.onLine) return;
   const now = Date.now();
-  const GRACE_MS = 10 * 60 * 1000; // 10分以内は同期処理途中の可能性があるので触らない
+  const GRACE_MS = 10 * 60 * 1000;
   const targets = reservations.filter(function(r) {
     if (!r || r.status === 'cancelled') return false;
-    // 明示的にリトライ対象マークがあるもの
+    // (A) 新規作成の再送信対象
     if (r._needsGcalResend) return true;
-    // マークはないが、PWA作成で10分以上経っても gcalEventId が無いもの
+    // (B) 編集の再送信対象（既存イベント update） ← ★ Claude (2026-07-14) 追加
+    if (r._needsGcalUpdate && r.gcalEventId) return true;
+    // (C) マークはないが、PWA作成で10分以上経っても gcalEventId が無いもの
     if (r.source === 'pwa' && !r.gcalEventId && r.createdAt && (now - r.createdAt) > GRACE_MS) {
       return true;
     }
@@ -7481,29 +7491,114 @@ async function _autoRetryGhostReservations() {
   });
   if (targets.length === 0) return;
   console.log('[自動リトライ] ' + targets.length + '件の未同期予約をGCalに送信します');
-  let okCount = 0;
+  let okCreate = 0, okUpdate = 0;
   for (const r of targets) {
     try {
-      const ok = await _resendReservationToGcal(r);
-      if (ok) {
-        delete r._needsGcalResend;
-        okCount++;
+      if (r._needsGcalUpdate && r.gcalEventId) {
+        // 編集再送
+        const ok = await _resendReservationUpdate(r);
+        if (ok) { delete r._needsGcalUpdate; okUpdate++; }
+      } else {
+        // 新規作成再送
+        const ok = await _resendReservationToGcal(r);
+        if (ok) { delete r._needsGcalResend; okCreate++; }
       }
     } catch (e) {}
-    // 連続リクエストで GAS の RateLimit にあたらないよう軽く間隔
     await new Promise(function(res) { setTimeout(res, 400); });
   }
+  const okCount = okCreate + okUpdate;
   if (okCount > 0) {
     try { saveReservations(); } catch (e) {}
     try {
       if (typeof updateSyncStatus === 'function') {
-        updateSyncStatus('✓ 未同期の予約 ' + okCount + '件を復旧しました', '#2e7d32');
-        setTimeout(function() { updateSyncStatus(''); }, 4000);
+        const msg = '✓ 未同期予約 ' + okCount + '件を復旧'
+          + (okCreate ? ' (新規:' + okCreate + ')' : '')
+          + (okUpdate ? ' (編集:' + okUpdate + ')' : '');
+        updateSyncStatus(msg, '#2e7d32');
+        setTimeout(function() { updateSyncStatus(''); }, 4500);
       }
       if (typeof logActivity === 'function') {
-        logActivity('☁️ 自動リトライ', okCount + '件をGCal送信', '');
+        logActivity('☁️ 自動リトライ',
+          '新規' + okCreate + '件 / 編集' + okUpdate + '件 復旧', '');
       }
     } catch (e) {}
+  }
+}
+
+// ★ Claude (2026-07-14): 編集内容を既存GCalイベントに再送信するヘルパー
+//   _resendReservationToGcal（新規作成）と対を成す update 版。
+async function _resendReservationUpdate(r) {
+  if (!r || !r.gcalEventId) return false;
+  try {
+    if (r.type === 'takeout') {
+      const startDate = new Date(r.date + 'T' + r.time + ':00');
+      const endDate = new Date(startDate.getTime() + 15 * 60 * 1000);
+      const title = '🥡 ' + r.name + '様（お土産・' + (r.count || 0) + '点・' + (r.total || 0).toLocaleString() + '円）';
+      const itemLines = (r.entries || []).map(function(e) {
+        return '- ' + e.name + (e.option ? '（' + e.option + '）' : '')
+          + (e.memo ? ' 【' + e.memo + '】' : '')
+          + ' ×' + e.qty + ' = ' + (e.price * e.qty).toLocaleString() + '円';
+      });
+      const desc = [
+        '予約ID: ' + r.id,
+        '受取日時: ' + r.date + ' ' + r.time,
+        'お名前: ' + r.name + '様',
+        '電話: ' + (r.phone || ''),
+        '点数: ' + (r.count || 0) + '点',
+        '合計: ' + (r.total || 0).toLocaleString() + '円',
+        '受付: PWA直接（お土産）※編集再送',
+        '備考: ' + (r.notes || 'なし'),
+        '',
+        '【商品内訳】',
+        itemLines.join('\n')
+      ].join('\n');
+      const resp = await callWebhook({
+        action: 'update',
+        store: r.store || 'torihashi',
+        eventId: r.gcalEventId,
+        title: title,
+        description: desc,
+        start: startDate.toISOString(),
+        end: endDate.toISOString()
+      });
+      return !!(resp && resp.ok);
+    }
+    // 通常予約
+    const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    const title = buildEventTitle(r);
+    const startDate = new Date(r.date + 'T' + r.time + ':00');
+    const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
+    const kI = parseInt(r.kidInfant, 10) || 0;
+    const kE = parseInt(r.kidElementary, 10) || 0;
+    const adult = Math.max(0, (r.people || 0) - kI - kE);
+    const peopleHistoryLine = (Array.isArray(r.peopleHistory) && r.peopleHistory.length > 1)
+      ? '人数履歴: ' + r.peopleHistory.join('→')
+      : null;
+    const desc = [
+      '予約ID: ' + r.id,
+      'ステータス: ' + (r.status === 'cancelled' ? '取消' : '確定'),
+      '人数: ' + (r.people || 0) + '名（中学生以上 ' + adult + ' / 小学生 ' + kE + ' / 幼児 ' + kI + '）',
+      ...(peopleHistoryLine ? [peopleHistoryLine] : []),
+      '名前: ' + (r.name || ''),
+      'コース: ' + (course ? course.name : '席だけ'),
+      '席: ' + (r.seat || '未設定'),
+      '電話: ' + (r.phone || ''),
+      '受付: PWA直接 ※編集再送',
+      '特記: ' + (r.notes || 'なし')
+    ].join('\n');
+    const resp = await callWebhook({
+      action: 'update',
+      store: r.store || 'torihashi',
+      eventId: r.gcalEventId,
+      title: title,
+      description: desc,
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    });
+    return !!(resp && resp.ok);
+  } catch (e) {
+    console.error('_resendReservationUpdate failed:', e);
+    return false;
   }
 }
 
@@ -8901,6 +8996,7 @@ function openEditModal(resId) {
         '受付: PWA直接',
         '特記: ' + (r.notes || 'なし')
       ].join('\n');
+      // ★ Claude (2026-07-14): 編集を GCal に同期。失敗時は _needsGcalUpdate フラグを立てて自動リトライ対象に。
       callWebhook({
         action: 'update',
         store: r.store || 'torihashi',
@@ -8910,12 +9006,22 @@ function openEditModal(resId) {
         start: startDate.toISOString(),
         end: endDate.toISOString()
       }).then(function(resp) {
-        if (resp.ok) {
+        if (resp && resp.ok) {
+          delete r._needsGcalUpdate;
+          try { saveReservations(); } catch (e) {}
           updateSyncStatus('✓ 編集同期OK', '#2e7d32');
         } else {
-          updateSyncStatus('⚠ 編集同期失敗', '#c62828');
+          r._needsGcalUpdate = true;
+          try { saveReservations(); } catch (e) {}
+          updateSyncStatus('⚠ 編集同期失敗（後で自動リトライ）', '#c62828');
         }
-        setTimeout(function() { updateSyncStatus(''); }, 3000);
+        setTimeout(function() { updateSyncStatus(''); }, 4000);
+      }).catch(function(err) {
+        // 通信エラー時もリトライ対象に
+        r._needsGcalUpdate = true;
+        try { saveReservations(); } catch (e) {}
+        updateSyncStatus('⚠ 通信エラー（後で自動リトライ）', '#c62828');
+        setTimeout(function() { updateSyncStatus(''); }, 4000);
       });
     }
   });
@@ -9210,6 +9316,7 @@ function openTakeoutEditModal(resId) {
         '【商品内訳】',
         itemLines.join('\n')
       ].join('\n');
+      // ★ Claude (2026-07-14): 編集を GCal に同期。失敗時は _needsGcalUpdate フラグを立てて自動リトライ対象に。
       callWebhook({
         action: 'update',
         store: r.store || 'torihashi',
@@ -9219,12 +9326,22 @@ function openTakeoutEditModal(resId) {
         start: startDate.toISOString(),
         end: endDate.toISOString()
       }).then(function(resp) {
-        if (resp.ok) {
+        if (resp && resp.ok) {
+          delete r._needsGcalUpdate;
+          try { saveReservations(); } catch (e) {}
           updateSyncStatus('✓ 編集同期OK', '#2e7d32');
         } else {
-          updateSyncStatus('⚠ 編集同期失敗', '#c62828');
+          r._needsGcalUpdate = true;
+          try { saveReservations(); } catch (e) {}
+          updateSyncStatus('⚠ 編集同期失敗（後で自動リトライ）', '#c62828');
         }
-        setTimeout(function() { updateSyncStatus(''); }, 3000);
+        setTimeout(function() { updateSyncStatus(''); }, 4000);
+      }).catch(function(err) {
+        // 通信エラー時もリトライ対象に
+        r._needsGcalUpdate = true;
+        try { saveReservations(); } catch (e) {}
+        updateSyncStatus('⚠ 通信エラー（後で自動リトライ）', '#c62828');
+        setTimeout(function() { updateSyncStatus(''); }, 4000);
       });
     }
   });
@@ -10596,9 +10713,12 @@ function renderReservationList() {
         // ★ Claude (2026-06-22): 仮押さえ撤廃により「仮」バッジは常に非表示。コードは互換のため残置。
         const statusTag = '';
         // ★ Claude (2026-06-21): 特記事項があれば小アイコンで可視化
-        const notesIcon = (r.notes && String(r.notes).trim())
-          ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+        const pendingSyncIcon = r._needsGcalUpdate
+          ? '<span class="ri-notes-icon" title="編集が未同期です。オンライン復帰後に自動で反映されます。" style="background:#fff3e0;color:#e65100;padding:0 4px;border-radius:4px;font-size:10px;">⏳</span>'
           : '';
+        const notesIcon = pendingSyncIcon + ((r.notes && String(r.notes).trim())
+          ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+          : '');
         // 商品概要を1〜2品目だけ抜粋
         const firstItems = (r.entries && r.entries.length > 0)
           ? r.entries.slice(0, 2).map(function(e) { return e.name + '×' + e.qty; }).join(',')
