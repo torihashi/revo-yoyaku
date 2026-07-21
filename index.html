@@ -10574,10 +10574,15 @@ function renderReservationList() {
                         :                              '';
 
       // ====== キャンセル予約：1行コンパクト ======
+      // ★ Claude (2026-07-14): 取込元マーク（⚫Yahoo/◾️AutoReserve）を残して、
+      //   何がキャンセルされたか一目で分かるように表示。
       if (r.status === 'cancelled') {
+        const cancelMarkHtml = sourceMark
+          ? '<span title="' + sourceTitle + '" style="margin-right:3px">' + sourceMark + '</span>'
+          : '';
         const sumText = r.type === 'takeout'
-          ? '🥡 ' + r.time + ' / ' + r.name + '様（お土産）'
-          : r.time + ' / ' + r.people + '名 / ' + r.name + '様';
+          ? cancelMarkHtml + '🥡 ' + r.time + ' / ' + r.name + '様（お土産）'
+          : cancelMarkHtml + r.time + ' / ' + r.people + '名 / ' + r.name + '様';
         return ''
           + '<div class="reservation-item cancelled-compact">'
           +   '<span class="cancel-tag">取消</span>'
