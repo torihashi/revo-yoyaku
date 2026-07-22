@@ -4183,10 +4183,20 @@ function _renderStaffHistoryChipsInner(data, showRefreshing) {
     }).join('');
 
     const refreshBadge = showRefreshing ? '<div style="font-size:10px;color:var(--muted);text-align:right;margin-bottom:4px;">🔄 最新データ取得中...</div>' : '';
+    // ★ Claude (2026-07-14): 希望休・出勤不可 の自己申請ボタン（PIN認証済み時のみ表示）
+    const staffName = _staffHistoryChipState.name;
+    const requestSectionHtml = staffName
+      ? '<div style="margin:12px 0;padding:10px;background:#e8f5e9;border:1.5px solid #2e7d32;border-radius:8px;">'
+        +   '<div style="font-size:12px;font-weight:700;color:#1b5e20;margin-bottom:6px;">📝 希望休・出勤不可を申請</div>'
+        +   '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">下のボタンから、希望休や早出できない日などを登録できます</div>'
+        +   '<button type="button" onclick="openStaffRequestModal(\'' + escapeAttr(staffName) + '\')" style="width:100%;padding:10px;background:#2e7d32;color:#fff;border:none;border-radius:6px;font-weight:700;font-family:inherit;cursor:pointer;font-size:13px;">＋ 希望休・不可を申請する</button>'
+        + '</div>'
+      : '';
     content.innerHTML = refreshBadge
       + '<div class="hist-chips">' + chips + '</div>'
       + '<div class="hist-summary"><span>実績/予定</span><span>' + pastCount + '日 / ' + futureCount + '日 = 計 ' + data.items.length + '日</span></div>'
       + '<div class="hist-summary" style="background:#e3f2fd;color:#0d47a1;"><span>実動時間（実績）</span><span>' + fmtH(totalMin) + '</span></div>'
+      + requestSectionHtml
       + '<div style="margin-top:10px;font-size:12px;color:var(--muted);font-weight:600;">📋 日別詳細</div>'
       + details
       // ★ Claude (2026-07-11): 給料明細セクション（確定済みなら表示）
@@ -5087,6 +5097,161 @@ function openStaffShiftModal(source) {
         alert(ok + '件登録、' + ng + '件失敗しました');
       }
       setTimeout(function() { updateSyncStatus(''); }, 4000);
+    });
+  });
+}
+
+// ============================================================
+// ★ Claude (2026-07-14): 希望休・出勤不可 の自己申請モーダル
+// PIN 認証済みスタッフが自分の希望休や不可日を申請する。
+// 内部的には createStaffShift アクションを使用（管理者と同じ経路）。
+// ============================================================
+function openStaffRequestModal(staffName) {
+  if (!staffName) { alert('従業員名が特定できません'); return; }
+  if (!isWebhookConfigured()) { alert('Webhookが未設定です'); return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+
+  const today = todayStr();
+  const minDate = today; // 今日以降のみ申請可
+
+  // 時刻オプション（早出ダメの場合の閾値）
+  function makeTimeOptionsForRequest(defaultHour) {
+    let opts = '';
+    for (let h = 11; h <= 26; h++) {
+      for (const m of [0, 30]) {
+        const realH = h % 24;
+        const display = String(h).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        const value = String(realH).padStart(2,'0') + ':' + String(m).padStart(2,'0');
+        const sel = (h === defaultHour && m === 0) ? ' selected' : '';
+        opts += '<option value="' + value + '"' + sel + '>' + display + '</option>';
+      }
+    }
+    return opts;
+  }
+
+  overlay.innerHTML =
+    '<div class="modal" style="max-width:420px">'
+    + '<h3>📝 希望休・出勤不可を申請</h3>'
+    + '<div style="padding:8px 10px;background:#e8f5e9;border-radius:6px;margin-bottom:10px;font-size:12px;">'
+    +   '👤 <strong>' + escapeAttr(staffName) + '</strong> さんの申請'
+    + '</div>'
+    // 日付
+    + '<div class="field">'
+    +   '<label>対象日<span class="req">*</span></label>'
+    +   '<input type="date" id="reqDate" min="' + minDate + '" value="' + minDate + '" style="width:100%">'
+    + '</div>'
+    // 種類
+    + '<div class="field">'
+    +   '<label>種類<span class="req">*</span></label>'
+    +   '<div class="shift-type-toggle" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">'
+    +     '<button type="button" id="reqTypeKou" class="shift-type-btn active" data-type="kou" style="color:#0288d1;">🏖 希望休</button>'
+    +     '<button type="button" id="reqTypeUnavAll" class="shift-type-btn" data-type="unav-all">❌ 終日不可</button>'
+    +     '<button type="button" id="reqTypeUnavEarly" class="shift-type-btn" data-type="unav-early">❌ 早出ダメ</button>'
+    +     '<button type="button" id="reqTypeUnavOther" class="shift-type-btn" data-type="unav-other">❌ その他</button>'
+    +   '</div>'
+    + '</div>'
+    // 早出ダメの場合の閾値時刻
+    + '<div class="field hidden" id="reqEarlyThresholdField">'
+    +   '<label>この時刻より前は不可</label>'
+    +   '<select id="reqEarlyThreshold" style="width:100%">' + makeTimeOptionsForRequest(18) + '</select>'
+    +   '<div class="hint">例: 18:00 = 18時より前の早出は不可</div>'
+    + '</div>'
+    // 理由（任意）
+    + '<div class="field">'
+    +   '<label>理由 / メモ（任意）</label>'
+    +   '<input type="text" id="reqReason" placeholder="例：私用、通院、学校行事など" maxlength="60" />'
+    +   '<div class="hint">空欄でもOK。店長への申し送り欄</div>'
+    + '</div>'
+    + '<button class="primary" id="reqSubmitBtn">✅ 申請する</button>'
+    + '<button class="secondary" id="reqCancelBtn">キャンセル</button>'
+    + '</div>';
+  document.body.appendChild(overlay);
+
+  // 種類トグル
+  let currentReqType = 'kou';
+  function setReqType(t) {
+    currentReqType = t;
+    ['reqTypeKou','reqTypeUnavAll','reqTypeUnavEarly','reqTypeUnavOther'].forEach(function(id) {
+      const btn = document.getElementById(id);
+      if (btn) btn.classList.toggle('active', btn.getAttribute('data-type') === t);
+    });
+    // 早出ダメの時だけ閾値時刻を表示
+    document.getElementById('reqEarlyThresholdField').classList.toggle('hidden', t !== 'unav-early');
+    // 送信ボタンのテキスト
+    const submitBtn = document.getElementById('reqSubmitBtn');
+    if (submitBtn) {
+      submitBtn.textContent = t === 'kou' ? '🏖 希望休を申請' : '❌ 出勤不可を申請';
+    }
+  }
+  ['reqTypeKou','reqTypeUnavAll','reqTypeUnavEarly','reqTypeUnavOther'].forEach(function(id) {
+    const btn = document.getElementById(id);
+    if (btn) btn.addEventListener('click', function() { setReqType(btn.getAttribute('data-type')); });
+  });
+
+  document.getElementById('reqCancelBtn').addEventListener('click', function() { overlay.remove(); });
+
+  document.getElementById('reqSubmitBtn').addEventListener('click', function() {
+    const date = document.getElementById('reqDate').value;
+    if (!date) { alert('日付を選択してください'); return; }
+    const reason = (document.getElementById('reqReason').value || '').trim();
+
+    // タイトル生成（既存の管理者フォーマットに合わせる）
+    let titleBase = '';
+    let extraNote = reason ? '（' + reason + '）' : '';
+    if (currentReqType === 'kou') {
+      titleBase = '🏖' + staffName + '（希望休' + (reason ? '・' + reason : '') + '）';
+    } else if (currentReqType === 'unav-all') {
+      titleBase = '❌' + staffName + (reason ? '（' + reason + '）' : '（終日不可）');
+    } else if (currentReqType === 'unav-early') {
+      const th = document.getElementById('reqEarlyThreshold').value;
+      titleBase = '❌' + staffName + '（' + th + 'より前不可' + (reason ? '・' + reason : '') + '）';
+    } else if (currentReqType === 'unav-other') {
+      titleBase = '❌' + staffName + (reason ? '（' + reason + '）' : '（不可）');
+    }
+
+    // 終日イベントとして登録
+    const startDate = new Date(date + 'T00:00:00+09:00');
+    const endDate = new Date(date + 'T00:00:00+09:00');
+
+    const submitBtn = document.getElementById('reqSubmitBtn');
+    submitBtn.disabled = true;
+    submitBtn.textContent = '⏳ 送信中...';
+
+    callWebhook({
+      action: 'createStaffShift',
+      store: currentStore,
+      name: titleBase,
+      start: startDate.toISOString(),
+      end: endDate.toISOString()
+    }).then(function(resp) {
+      if (resp && resp.ok) {
+        overlay.remove();
+        alert('✅ ' + date + ' に「' + titleBase.replace(staffName, '').replace(/^[🏖❌]/, '').replace(/^[（(]|[）)]$/g, '') + '」を申請しました。\n\n店長に反映されました。');
+        // シフト履歴を再取得
+        try {
+          // キャッシュを無効化
+          const key = _staffKey(date, currentStore);
+          if (typeof _staffSchedCache !== 'undefined') delete _staffSchedCache[key];
+          if (typeof _staffMonthCalCache !== 'undefined') {
+            Object.keys(_staffMonthCalCache).forEach(function(k) { delete _staffMonthCalCache[k]; });
+          }
+          if (typeof renderStaffHistoryChips === 'function') renderStaffHistoryChips();
+        } catch (e) {}
+        try {
+          if (typeof logActivity === 'function') {
+            logActivity('📝 スタッフ自主申請', staffName + ' ' + date, titleBase);
+          }
+        } catch (e) {}
+      } else {
+        submitBtn.disabled = false;
+        submitBtn.textContent = '✅ 申請する';
+        alert('⚠ 申請失敗: ' + ((resp && resp.error) || '不明'));
+      }
+    }).catch(function(e) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '✅ 申請する';
+      alert('⚠ 通信エラー: ' + String(e));
     });
   });
 }
