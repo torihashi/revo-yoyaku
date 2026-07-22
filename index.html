@@ -2033,7 +2033,7 @@ select.time-select option:disabled { color: #aaa; }
     <div class="staff-rail" id="listStaffRail" style="margin-top:14px;">
       <div class="staff-rail-header">
         <span>👥 本日のシフト <span id="listStaffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
-        <button type="button" class="staff-add-btn" onclick="openStaffShiftModal()">＋ シフト追加</button>
+        <button type="button" class="staff-add-btn" onclick="openStaffShiftModal('list')">＋ シフト追加</button>
       </div>
       <div id="listStaffRailContent" class="staff-rail-content">
         <div class="staff-empty">読み込み中...</div>
@@ -2137,7 +2137,7 @@ select.time-select option:disabled { color: #aaa; }
     <div class="staff-rail" id="staffRail">
       <div class="staff-rail-header">
         <span>👥 本日のシフト <span id="staffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
-        <button type="button" class="staff-add-btn" onclick="openStaffShiftModal()">＋ シフト追加</button>
+        <button type="button" class="staff-add-btn" onclick="openStaffShiftModal('seatmap')">＋ シフト追加</button>
       </div>
       <div id="staffRailContent" class="staff-rail-content">
         <div class="staff-empty">読み込み中...</div>
@@ -4775,7 +4775,10 @@ function preloadHolidays() {
 // シフト追加モーダル
 // ★ Claude (2026-07-14): 内部カレンダーを廃止。日付は外側の月間カレンダー
 //   （🎯 日付選択モードで選択）または現在の選択日から取得する。
-function openStaffShiftModal() {
+// ★ Claude (2026-07-14 update): source 引数を追加
+//   'list' or 'seatmap' → 現在表示中の日付(smState.date)を対象日にする
+//   引数なし or 'staff' → バイト管理タブの選択日を対象にする（従来動作）
+function openStaffShiftModal(source) {
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
 
@@ -4805,15 +4808,30 @@ function openStaffShiftModal() {
       }).join('')
     : '<option value="">初回のみ読み込み中（数秒）...</option>';
 
-  // ★ Claude (2026-07-14): 日付の取得優先順位
-  //   1. _shiftAddSelectedDates（🎯モードで選択された複数日）
-  //   2. _staffMonthCalState.selectedDate（従来の単一選択日）
-  //   3. なし → エラー表示
-  const selectedDatesList = Array.from(_shiftAddSelectedDates).sort();
-  const singleSelected = (selectedDatesList.length === 0 && _staffMonthCalState.selectedDate)
-    ? _staffMonthCalState.selectedDate : null;
-  const targetDates = selectedDatesList.length > 0 ? selectedDatesList
-                     : singleSelected ? [singleSelected] : [];
+  // ★ Claude (2026-07-14): 日付の取得優先順位（source によって切替）
+  //   source === 'list' or 'seatmap' → 現在表示中の日（listDate/smState.date）を使用
+  //   source === 'staff' or undefined → バイト管理タブの選択状態を使用
+  let targetDates = [];
+  if (source === 'list' || source === 'seatmap') {
+    // 一覧タブ / 座席表タブ から呼び出し → 表示中の日付を対象に
+    let currentDate = '';
+    try {
+      currentDate = (typeof smState !== 'undefined' && smState.date) ? smState.date : '';
+    } catch (e) {}
+    if (!currentDate) {
+      const listInp = document.getElementById('listDate');
+      if (listInp && listInp.value) currentDate = listInp.value;
+    }
+    if (!currentDate) currentDate = todayStr();
+    targetDates = [currentDate];
+  } else {
+    // バイト管理タブから呼び出し → 選択された複数日 or 従来動作
+    const selectedDatesList = Array.from(_shiftAddSelectedDates).sort();
+    const singleSelected = (selectedDatesList.length === 0 && _staffMonthCalState.selectedDate)
+      ? _staffMonthCalState.selectedDate : null;
+    targetDates = selectedDatesList.length > 0 ? selectedDatesList
+                 : singleSelected ? [singleSelected] : [];
+  }
 
   // 対象日の表示用HTML
   const wd = ['日','月','火','水','木','金','土'];
