@@ -10662,6 +10662,24 @@ function toggleResExpand(summaryEl) {
   item.classList.toggle('expanded');
 }
 
+// ★ Claude (2026-07-14): 登録日時を "yyyy/MM/dd HH:MM" 形式でフォーマット
+//   createdAt は Unix timestamp（ミリ秒）。 未設定なら「不明」を返す。
+function formatCreatedAt(ts) {
+  if (!ts) return '不明';
+  const n = parseInt(ts, 10);
+  if (!n || isNaN(n)) return '不明';
+  const d = new Date(n);
+  if (isNaN(d.getTime())) return '不明';
+  const wd = ['日','月','火','水','木','金','土'];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const dow = wd[d.getDay()];
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return y + '/' + m + '/' + day + '（' + dow + '）' + hh + ':' + mm;
+}
+
 function noteBadgeDisplayLabel(notes) {
   const text = String(notes || '');
   if (text.indexOf('二次会') >= 0) return '二次会';
@@ -10950,6 +10968,8 @@ function renderReservationList() {
           +     (r.summary ? '<div class="meta">' + r.summary + '</div>' : '')
           +     '<div class="meta">合計 ' + (r.total || 0).toLocaleString() + '円 ／ ' + (r.phone || '') + '</div>'
           +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
+          // ★ Claude (2026-07-14): 最初に登録した日時を表示
+          +     '<div class="meta" style="color:var(--muted);font-size:11px;">📅 登録: ' + formatCreatedAt(r.createdAt) + '</div>'
           +     '<div class="actions">'
           +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
           +       '<button class="danger" onclick="cancelReservation(\'' + r.id + '\')">キャンセル</button>'
@@ -11026,6 +11046,8 @@ function renderReservationList() {
               + '</div>'
             : '')
         +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
+        // ★ Claude (2026-07-14): 最初に登録した日時を表示
+        +     '<div class="meta" style="color:var(--muted);font-size:11px;">📅 登録: ' + formatCreatedAt(r.createdAt) + '</div>'
         +     '<div class="actions">'
         +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
         +       '<button onclick="openSeatEditor(\'' + r.id + '\')">🪑 席' + (pending ? '指定' : '変更') + '</button>'
