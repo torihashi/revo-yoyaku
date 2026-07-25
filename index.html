@@ -564,6 +564,33 @@ button.secondary:active { background: var(--primary); color: white; }
 .seat-layout .seat.busy {
   background: #ffebee; color: var(--error); border-color: var(--error);
 }
+/* ★ Claude (2026-07-14): コース別の色分け（一覧タブと同じ配色に統一）
+ *   飲放  → 濃いピンク/マゼンタ
+ *   料理  → 黄色/アンバー
+ *   プレミ → パープル
+ *   席のみ → ティール（薄い青緑）
+ * 鳥はし・リボルバード 両方のレイアウトに適用（!important でリボの緑デフォルトを上書き） */
+.seat-layout .seat.busy.drink,
+.revo-seat-layout .seat.busy.drink {
+  background: #f8bbd0 !important; color: #880e4f !important; border-color: #ec407a !important;
+}
+.seat-layout .seat.busy.meal,
+.revo-seat-layout .seat.busy.meal {
+  background: #fff59d !important; color: #f57f17 !important; border-color: #fbc02d !important;
+}
+.seat-layout .seat.busy.premium,
+.revo-seat-layout .seat.busy.premium {
+  background: #ede7f6 !important; color: #4527a0 !important; border-color: #b39ddb !important;
+}
+.seat-layout .seat.busy.seat-only,
+.revo-seat-layout .seat.busy.seat-only {
+  background: #e0f2f1 !important; color: #00695c !important; border-color: #80cbc4 !important;
+}
+/* 占有タイル内の時刻表示色もコースに合わせる */
+.seat.busy.drink .occ-time     { color: #880e4f !important; }
+.seat.busy.meal .occ-time      { color: #f57f17 !important; }
+.seat.busy.premium .occ-time   { color: #4527a0 !important; }
+.seat.busy.seat-only .occ-time { color: #00695c !important; }
 .seat-layout .seat.busy .occ {
   position: absolute; bottom: 0; left: 0; right: 0;
   font-size: 9px; line-height: 1.15;
@@ -11110,7 +11137,8 @@ function _renderSeatMapImpl() {
   // 各席要素を更新
   document.querySelectorAll('#seatLayoutTori .seat, #seatLayoutRevo .seat').forEach(function(el) {
     const seatId = el.getAttribute('data-seat');
-    el.classList.remove('busy', 'has-booking', 'drop-target', 'in-move', 'multi-time');
+    // ★ Claude (2026-07-14): コース別クラスも一度リセット（drink/meal/premium/seat-only）
+    el.classList.remove('busy', 'has-booking', 'drop-target', 'in-move', 'multi-time', 'drink', 'meal', 'premium', 'seat-only');
     el.querySelectorAll('.occ').forEach(function(o) { o.remove(); });
     el.innerHTML = getSeatDisplayLabel(seatId);
 
@@ -11132,6 +11160,22 @@ function _renderSeatMapImpl() {
       const r = mergedRes[0]; // 最も早い時間の予約を主表示
       const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
       const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
+      // ★ Claude (2026-07-14): コース種別に応じて色分けクラスを付与（一覧タブと同じ配色）
+      if (courseObj) {
+        const tp = courseObj.type || '';
+        const isSeatOnly = (typeof isSeatOnlyCourse === 'function' && isSeatOnlyCourse(courseObj))
+          || courseObj.id === 'S' || courseObj.id === 'RS';
+        const isPremium  = tp.indexOf('プレミアム') >= 0 || courseObj.id === 'E';
+        const isDrink    = tp.indexOf('飲み放題') >= 0 || tp.indexOf('クラフト') >= 0;
+        const isMeal     = tp.indexOf('料理') >= 0;
+        if (isSeatOnly)      el.classList.add('seat-only');
+        else if (isPremium)  el.classList.add('premium');
+        else if (isDrink)    el.classList.add('drink');
+        else if (isMeal)     el.classList.add('meal');
+      } else {
+        // コース不明時は席のみ扱い
+        el.classList.add('seat-only');
+      }
       const extra = mergedRes.length - 1; // 同一席の追加予約件数
       const occ = document.createElement('div');
       occ.className = 'occ';
