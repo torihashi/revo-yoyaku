@@ -5902,6 +5902,23 @@ function mergeFromCalendar(items) {
       if (ev.store && !existing.store) {
         existing.store = ev.store; changed = true;
       }
+      // ★ Claude (2026-07-14): 誤った createdAt（旧仕様で ev.start＝予約日 が入っていたもの）を補正
+      //   GCal 側で ev.created が取れるなら、それが本当の登録日時。
+      //   条件: 現状の createdAt が予約開始時刻と一致 or ずっと未来なら誤りと判断して上書き。
+      if (ev.created) {
+        const gcalCreatedMs = new Date(ev.created).getTime();
+        if (!isNaN(gcalCreatedMs) && gcalCreatedMs > 0) {
+          const evStartMs = new Date(ev.start).getTime();
+          const localCreatedMs = existing.createdAt || 0;
+          // 差が5分以内 = 予約日を createdAt にしていた旧仕様の可能性 → 補正
+          const looksBuggy = localCreatedMs && Math.abs(localCreatedMs - evStartMs) < 5 * 60 * 1000;
+          const missing = !localCreatedMs;
+          if (missing || looksBuggy) {
+            existing.createdAt = gcalCreatedMs;
+            changed = true;
+          }
+        }
+      }
       if (titleCancelled && existing.status !== 'cancelled') {
         existing.status = 'cancelled'; changed = true; cancelled++;
       }
@@ -6023,6 +6040,17 @@ function mergeFromCalendar(items) {
       const parsedNotes = parseNotesFromDescription(ev.description || '');
       // ★ Claude (2026-06-22): 電話番号も同時に復元（PWA直接・Yahoo!/AutoReserve いずれも description に「電話: …」で書かれる）
       const parsedPhone = parsePhoneFromDescription(ev.description || '');
+      // ★ Claude (2026-07-14): 登録日時は GCal のイベント作成日時（ev.created）を優先
+      //   Yahoo/AutoReserve/ぐるなび はメール取込された日、PWA新規は作成された日になる。
+      //   フォールバック: ev.start（旧仕様と同じ）
+      let createdAtMs = 0;
+      if (ev.created) {
+        const cd = new Date(ev.created);
+        if (!isNaN(cd.getTime())) createdAtMs = cd.getTime();
+      }
+      if (!createdAtMs) {
+        createdAtMs = new Date(ev.start).getTime();
+      }
       const newRes = {
         id: 'GC-' + ev.id.substring(0, 10),
         date: evDate, time: evTime,
@@ -6036,7 +6064,7 @@ function mergeFromCalendar(items) {
         store: ev.store || 'torihashi',
         type: isTakeout ? 'takeout' : undefined,
         gcalEventId: ev.id,
-        createdAt: new Date(ev.start).getTime()
+        createdAt: createdAtMs
       };
       if (isTakeout) {
         const tk = parseTakeoutDescription(ev.description || '');
