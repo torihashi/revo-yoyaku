@@ -5602,9 +5602,12 @@ function inferCourseFromCalendar(title, description, store) {
   const text = normalizeCourseTextForMatch(raw);
   const isRevo = store === 'revolverd';
   if (isRevo) {
-    if (text.indexOf('クラフト飲み放題') >= 0 || text.indexOf('クラフト') >= 0) return 'R2';
+    // ★ Claude (2026-07-14): 判定順序修正
+    //   旧: 「クラフト」を先にチェックしていたため「コラボクラフト」も R2 に誤判定 → 編集がすぐ元に戻る不具合
+    //   新: より具体的なパターン（コラボクラフト）から先にチェック
     if (text.indexOf('コラボクラフト') >= 0 || text.indexOf('コラボ飲放') >= 0) return 'R4';
     if (text.indexOf('コラボ') >= 0) return 'R3';
+    if (text.indexOf('クラフト飲み放題') >= 0 || text.indexOf('クラフト') >= 0) return 'R2';
     if (text.indexOf('リボ飲') >= 0 || text.indexOf('リボ飲み放題') >= 0) return 'R1';
     if (text.indexOf('女子会') >= 0) return 'R5';
     return null; // 不明はnull（既存値維持）
