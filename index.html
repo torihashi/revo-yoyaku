@@ -8461,27 +8461,77 @@ function submitReservation() {
     alert('予約確認データが見つかりません。お手数ですが「入力に戻る」から再確認してください。');
     return;
   }
-  // ★ Claude (2026-07-14): 重複予約チェック（同日・同名・同店舗）
-  //   別端末で先に登録済みなのに気付かず再登録するケースを防ぐ
+  // ★ Claude (2026-07-14): 重複予約チェック（改良版）
+  //   同姓客（田中様が複数など）による誤警告を減らす二段階判定
+  //   ✅ STRONG（警告ダイアログでブロック）:
+  //     - 電話番号が完全一致（最強シグナル）
+  //     - 名前が完全一致 かつ 時刻差60分以内
+  //   ℹ️ WEAK（参考情報として表示、キャンセルオプションあり）:
+  //     - 名前部分一致のみ（別客の可能性が高いが念のため確認）
   const targetStore = data.store || currentStore || 'torihashi';
   const normName = _normalizeNameForMatch(data.name);
-  const dupList = reservations.filter(function(r) {
-    if (!r || r.status === 'cancelled') return false;
-    if (r.date !== data.date) return false;
-    if ((r.store || 'torihashi') !== targetStore) return false;
-    if (r.type === 'takeout') return false;
-    return _normalizeNameForMatch(r.name).indexOf(normName) >= 0
-        || normName.indexOf(_normalizeNameForMatch(r.name)) >= 0;
+  const normPhone = String(data.phone || '').replace(/[\s\-‐‑－ー]/g, '');
+  const dataTimeMin = (function() {
+    const p = String(data.time || '').split(':');
+    return (p.length >= 2) ? (parseInt(p[0], 10) * 60 + parseInt(p[1], 10)) : null;
+  })();
+
+  const strong = [], weak = [];
+  reservations.forEach(function(r) {
+    if (!r || r.status === 'cancelled') return;
+    if (r.date !== data.date) return;
+    if ((r.store || 'torihashi') !== targetStore) return;
+    if (r.type === 'takeout') return;
+    const rNormName = _normalizeNameForMatch(r.name);
+    const rNormPhone = String(r.phone || '').replace(/[\s\-‐‑－ー]/g, '');
+    const rTimeParts = String(r.time || '').split(':');
+    const rTimeMin = (rTimeParts.length >= 2)
+      ? (parseInt(rTimeParts[0], 10) * 60 + parseInt(rTimeParts[1], 10))
+      : null;
+    // 電話番号完全一致 → 強い一致
+    if (normPhone && rNormPhone && normPhone === rNormPhone) {
+      strong.push({ r: r, reason: '📞 電話番号が同じ' });
+      return;
+    }
+    // 名前完全一致 かつ 時刻差60分以内 → 強い一致
+    if (rNormName === normName && rNormName.length > 0
+        && dataTimeMin != null && rTimeMin != null
+        && Math.abs(dataTimeMin - rTimeMin) <= 60) {
+      strong.push({ r: r, reason: '👤 同名かつ時刻近い (差' + Math.abs(dataTimeMin - rTimeMin) + '分)' });
+      return;
+    }
+    // 名前が部分一致 → 弱い一致（同姓客の可能性）
+    if ((rNormName.indexOf(normName) >= 0 || normName.indexOf(rNormName) >= 0)
+        && rNormName.length > 0 && normName.length > 0) {
+      weak.push(r);
+    }
   });
-  if (dupList.length > 0) {
-    const dupText = dupList.map(function(r) {
-      return '・' + r.time + ' / ' + (r.people || '?') + '名 / ' + r.name + '様 / 席:' + (r.seat || '未設定');
+
+  if (strong.length > 0) {
+    // 強い一致 → ブロック
+    const list = strong.map(function(m) {
+      return '・' + m.r.time + ' / ' + (m.r.people || '?') + '名 / ' + m.r.name + '様 / 席:' + (m.r.seat || '未設定') + '\n   → ' + m.reason;
     }).join('\n');
-    const msg = '⚠ 同じ日に「' + data.name + '」様と似た予約があります:\n\n'
-      + dupText + '\n\n'
+    const msg = '⚠ 重複の可能性が高い予約があります:\n\n' + list + '\n\n'
       + '別端末で既に登録されている可能性があります。\n'
       + '（画面上部の 🔄 同期ボタンで最新化してから確認してください）\n\n'
-      + 'それでも新規で登録しますか？';
+      + 'それでも別予約として新規登録しますか？';
+    if (!confirm(msg)) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'この内容で予約を確定する';
+      }
+      return;
+    }
+  } else if (weak.length > 0) {
+    // 弱い一致（同姓客の可能性）→ 確認だけ
+    const list = weak.map(function(r) {
+      const phoneShort = (r.phone || '').replace(/[\s\-]/g, '').slice(-4);
+      return '・' + r.time + ' / ' + (r.people || '?') + '名 / ' + r.name + '様' + (phoneShort ? ' (📞...下4桁: ' + phoneShort + ')' : '');
+    }).join('\n');
+    const msg = 'ℹ️ 同日に同じ名前を含む予約があります:\n\n' + list + '\n\n'
+      + '↑ 電話番号や時刻が違うので **別のお客様** の可能性が高いです。\n\n'
+      + '登録を続けますか？';
     if (!confirm(msg)) {
       if (btn) {
         btn.disabled = false;
