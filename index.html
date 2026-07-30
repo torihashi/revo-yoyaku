@@ -8310,6 +8310,14 @@ function toKatakana(s) {
   return s.replace(/[ぁ-ゖ]/g, c => String.fromCharCode(c.charCodeAt(0) + 0x60));
 }
 
+// ★ Claude (2026-07-14): 名前のあいまい照合用の正規化（ひらがな→カタカナ、空白除去）
+function _normalizeNameForMatch(s) {
+  if (!s) return '';
+  return String(s)
+    .replace(/[ぁ-ゖ]/g, function(c) { return String.fromCharCode(c.charCodeAt(0) + 0x60); })
+    .replace(/\s+/g, '');
+}
+
 function getSelectedNoteBadges() {
   return Array.prototype.slice.call(document.querySelectorAll('.note-badge-btn.selected[data-note-badge]'))
     .map(function(btn) { return btn.getAttribute('data-note-badge') || ''; })
@@ -8452,6 +8460,35 @@ function submitReservation() {
   if (!data || !data.date || !data.time || !data.name) {
     alert('予約確認データが見つかりません。お手数ですが「入力に戻る」から再確認してください。');
     return;
+  }
+  // ★ Claude (2026-07-14): 重複予約チェック（同日・同名・同店舗）
+  //   別端末で先に登録済みなのに気付かず再登録するケースを防ぐ
+  const targetStore = data.store || currentStore || 'torihashi';
+  const normName = _normalizeNameForMatch(data.name);
+  const dupList = reservations.filter(function(r) {
+    if (!r || r.status === 'cancelled') return false;
+    if (r.date !== data.date) return false;
+    if ((r.store || 'torihashi') !== targetStore) return false;
+    if (r.type === 'takeout') return false;
+    return _normalizeNameForMatch(r.name).indexOf(normName) >= 0
+        || normName.indexOf(_normalizeNameForMatch(r.name)) >= 0;
+  });
+  if (dupList.length > 0) {
+    const dupText = dupList.map(function(r) {
+      return '・' + r.time + ' / ' + (r.people || '?') + '名 / ' + r.name + '様 / 席:' + (r.seat || '未設定');
+    }).join('\n');
+    const msg = '⚠ 同じ日に「' + data.name + '」様と似た予約があります:\n\n'
+      + dupText + '\n\n'
+      + '別端末で既に登録されている可能性があります。\n'
+      + '（画面上部の 🔄 同期ボタンで最新化してから確認してください）\n\n'
+      + 'それでも新規で登録しますか？';
+    if (!confirm(msg)) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'この内容で予約を確定する';
+      }
+      return;
+    }
   }
   if (btn) {
     btn.disabled = true;
