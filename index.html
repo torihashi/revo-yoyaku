@@ -3183,14 +3183,15 @@ function changeStaffHistoryDetailMonth(delta) {
 
 // ============================================================
 // ★ Claude (2026-07-14): シフトデータ localStorage キャッシュ
-// キー: staffMonthCache::<store>::<name>::<year>-<month>
+// キー: staffMonthCache_v2::<store>::<name>::<year>-<month>
 // TTL: 5分（staffMonthCacheTtlMs）
 // stale-while-revalidate パターン:
 //   1. キャッシュあり → 即描画
 //   2. 裏でフレッシュ取得 → 差分あれば静かに再描画
 //   3. キャッシュなし → 通常フロー
 // ============================================================
-const STAFF_MONTH_CACHE_PREFIX = 'staffMonthCache::';
+// ★ Codex (2026-07-31): 日跨ぎ計算修正前の0hキャッシュを読まないようキーを更新。
+const STAFF_MONTH_CACHE_PREFIX = 'staffMonthCache_v2::';
 const STAFF_MONTH_CACHE_TTL_MS = 5 * 60 * 1000;
 
 function _staffMonthCacheKey(state) {
