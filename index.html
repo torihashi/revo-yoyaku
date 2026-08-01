@@ -4503,22 +4503,30 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     return;
   }
   const salaryType = emp.salaryType || '';
-  const isAlbait = salaryType.indexOf('アルバイト') >= 0 || salaryType.indexOf('時給') >= 0;
-  const isSpecialAlbait = salaryType.indexOf('特殊') >= 0;
-  if (!isAlbait) {
-    box.innerHTML = '<span style="color:var(--muted);">対象外の給与形式（' + escapeAttr(salaryType || '未設定') + '）→ 給料確定機能はアルバイト/特殊アルバイトのみ対応</span>';
+  const section = emp.section || '';
+  // ★ Claude (2026-07-14): 正社員・専従者（月給）も給料明細を見られるように
+  //   区分/給与形式で判定 → 時給系（アルバイト） or 月給系（正社員/専従者）
+  const isHourly = salaryType.indexOf('時給') >= 0 || salaryType.indexOf('アルバイト') >= 0;
+  const isMonthly = salaryType.indexOf('月給') >= 0
+    || section.indexOf('正社員') >= 0 || section.indexOf('専従者') >= 0;
+  const isSpecialAlbait = salaryType.indexOf('特殊') >= 0 || section.indexOf('特殊') >= 0;
+  const isRegular = section.indexOf('正社員') >= 0;
+  const isSpecialistFamily = section.indexOf('専従者') >= 0;
+  if (!isHourly && !isMonthly) {
+    box.innerHTML = '<span style="color:var(--muted);">対象外（給与形式:' + escapeAttr(salaryType || '未設定') + ' / 区分:' + escapeAttr(section || '未設定') + '）→ 給料確定機能はアルバイト・正社員・専従者のみ対応</span>';
     return;
   }
   // ★ Claude (2026-07-08): 全アルバイトで控除入力欄を常時表示（デフォルト0）
-  //   アルバイトも税/雇用保険を必要に応じて入力できるように運用を柔軟化。
-  //   0のままなら手取り = 支給合計。
 
   // 計算
   const totalHours = totalMin / 60;
   const nightHours = nightMin / 60;
-  const hourlyRate = emp.hourlyRate || 0;
+  const hourlyRate = emp.hourlyRate || 0;  // 時給 or 月給の金額
   const nightHourlyRate = emp.nightHourlyRate || 0;
-  const basicPay = Math.round(totalHours * hourlyRate);
+  // ★ Claude (2026-07-14): 月給系は金額をそのまま基本給に、時給系は 時間×時給
+  const basicPay = isMonthly
+    ? Math.round(hourlyRate)  // 月給は 金額(E列)をそのまま基本給とする
+    : Math.round(totalHours * hourlyRate);
   const nightPay = Math.round(nightHours * nightHourlyRate);
   // ★ Claude (2026-07-14): マスタから手当4種を読込
   const positionAllowance = emp.positionAllowance || 0;
@@ -4528,19 +4536,28 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
   const commuteNonTaxable = emp.commuteNonTaxable || 0;
   const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
 
+  // ★ Claude (2026-07-14): 月給/時給で表示ラベルを切替
+  const rateLabel = isMonthly ? '月給' : '時給';
+  const basicPayLabel = isMonthly ? '基本給（月給）' : '基本給（時間×時給）';
+  const sectionBadge = section
+    ? '<span style="margin-left:4px;font-size:10px;padding:1px 5px;background:'
+      + (isRegular ? '#1976d2' : isSpecialistFamily ? '#7b1fa2' : isSpecialAlbait ? '#c62828' : '#2e7d32')
+      + ';color:#fff;border-radius:4px;">' + escapeAttr(section) + '</span>'
+    : '';
+
   let html = ''
     + '<div style="background:#fff;padding:10px;border-radius:6px;margin-bottom:8px;">'
-    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>👤 従業員</span><strong>' + escapeAttr(staffName) + '</strong></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>👤 従業員</span><strong>' + escapeAttr(staffName) + sectionBadge + '</strong></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>📅 対象月</span><strong>' + yearMonthStr + '</strong></div>'
-    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>💼 給与形式</span><strong style="color:' + (isSpecialAlbait ? '#c62828' : '#2e7d32') + ';">' + escapeAttr(salaryType) + '</strong></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>💼 給与形式</span><strong style="color:' + (isMonthly ? '#1976d2' : isSpecialAlbait ? '#c62828' : '#2e7d32') + ';">' + escapeAttr(salaryType) + '</strong></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>出勤日数</span><span>' + workDays + '日</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>労働時間</span><span>' + totalHours.toFixed(2) + 'h</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時間</span><span>' + nightHours.toFixed(2) + 'h</span></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
-    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>時給</span><span>¥' + hourlyRate.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>' + rateLabel + '</span><span>¥' + hourlyRate.toLocaleString() + '</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時給</span><span>¥' + nightHourlyRate.toLocaleString() + '</span></div>'
-    +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-top:4px;"><span>基本給（時間×時給）</span><span>¥' + basicPay.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-top:4px;"><span>' + basicPayLabel + '</span><span>¥' + basicPay.toLocaleString() + '</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;"><span>深夜手当（深夜×深夜時給）</span><span>¥' + nightPay.toLocaleString() + '</span></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
     +   '<div style="font-size:11px;color:#e65100;font-weight:700;margin:4px 0;">手当（マスタから読込・必要に応じて編集可）</div>'
