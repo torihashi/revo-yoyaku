@@ -4281,6 +4281,19 @@ function _fetchAndRenderPaySlipForStaff(staffName, year, month, targetElId) {
       const hr = '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">';
       const hrSolid = '<hr style="margin:6px 0;border:none;border-top:1px solid #999;">';
 
+      // ★ Claude (2026-07-14): 手当5種（0円ならスキップ）
+      const anyAllowance = (item.positionAllowance || 0) + (item.overtimeAllowance || 0)
+        + (item.nightOvertimeAllowance || 0) + (item.commuteTaxable || 0) + (item.commuteNonTaxable || 0);
+      const allowanceLines = anyAllowance > 0
+        ? hr
+          + '<div style="font-size:11px;color:#e65100;font-weight:700;margin:4px 0;">手当</div>'
+          + ((item.positionAllowance || 0) > 0 ? '<div style="' + rowStyle + '"><span>役職手当</span><span>' + yen(item.positionAllowance) + '</span></div>' : '')
+          + ((item.overtimeAllowance || 0) > 0 ? '<div style="' + rowStyle + '"><span>残業手当</span><span>' + yen(item.overtimeAllowance) + '</span></div>' : '')
+          + ((item.nightOvertimeAllowance || 0) > 0 ? '<div style="' + rowStyle + '"><span>深夜残業手当</span><span>' + yen(item.nightOvertimeAllowance) + '</span></div>' : '')
+          + ((item.commuteTaxable || 0) > 0 ? '<div style="' + rowStyle + '"><span>通勤手当(課税)</span><span>' + yen(item.commuteTaxable) + '</span></div>' : '')
+          + ((item.commuteNonTaxable || 0) > 0 ? '<div style="' + rowStyle + '"><span>通勤手当(非課)</span><span>' + yen(item.commuteNonTaxable) + '</span></div>' : '')
+        : '';
+
       let html = ''
         + '<div style="background:#fffde7;border:2px solid #f9a825;border-radius:10px;padding:12px;margin-top:8px;">'
         +   '<div style="font-size:13px;font-weight:700;color:#e65100;margin-bottom:8px;text-align:center;">💰 ' + yearMonthStr + ' 給料明細（確定済み）</div>'
@@ -4296,6 +4309,7 @@ function _fetchAndRenderPaySlipForStaff(staffName, year, month, targetElId) {
         +     '<div style="' + rowStyle + '"><span>深夜時給</span><span>' + yen(item.nightHourlyRate) + '</span></div>'
         +     '<div style="' + rowStyleBold + '"><span>基本給</span><span>' + yen(item.basicPay) + '</span></div>'
         +     '<div style="' + rowStyleBold + '"><span>深夜手当</span><span>' + yen(item.nightPay) + '</span></div>'
+        +     allowanceLines
         +     hrSolid
         +     '<div style="' + rowStyleBold + 'color:#2e7d32;"><span>支給合計</span><span>' + yen(item.totalGross) + '</span></div>';
 
@@ -4506,7 +4520,12 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
   const nightHourlyRate = emp.nightHourlyRate || 0;
   const basicPay = Math.round(totalHours * hourlyRate);
   const nightPay = Math.round(nightHours * nightHourlyRate);
-  const totalGross = basicPay + nightPay;
+  // ★ Claude (2026-07-14): マスタから手当4種を読込
+  const positionAllowance = emp.positionAllowance || 0;
+  const overtimeAllowance = emp.overtimeAllowance || 0;
+  const nightOvertimeDefault = emp.nightOvertimeAllowance || 0;
+  const commuteTaxable = emp.commuteTaxable || 0;
+  const commuteNonTaxable = emp.commuteNonTaxable || 0;
   const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
 
   let html = ''
@@ -4523,8 +4542,15 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時給</span><span>¥' + nightHourlyRate.toLocaleString() + '</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;margin-top:4px;"><span>基本給（時間×時給）</span><span>¥' + basicPay.toLocaleString() + '</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:13px;font-weight:600;"><span>深夜手当（深夜×深夜時給）</span><span>¥' + nightPay.toLocaleString() + '</span></div>'
+    +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
+    +   '<div style="font-size:11px;color:#e65100;font-weight:700;margin:4px 0;">手当（マスタから読込・必要に応じて編集可）</div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;margin-bottom:3px;"><span>役職手当</span><input type="number" id="psPositionAllowance" value="' + positionAllowance + '" min="0" inputmode="numeric" style="width:100px;padding:3px 5px;font-size:12px;text-align:right;border:1px solid #ccc;border-radius:4px;" /></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;margin-bottom:3px;"><span>残業手当</span><input type="number" id="psOvertimeAllowance" value="' + overtimeAllowance + '" min="0" inputmode="numeric" style="width:100px;padding:3px 5px;font-size:12px;text-align:right;border:1px solid #ccc;border-radius:4px;" /></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;margin-bottom:3px;background:#fff3e0;padding:3px 5px;border-radius:4px;"><span><strong>深夜残業手当</strong> <span style="font-size:10px;color:#e65100;">(PWA入力)</span></span><input type="number" id="psNightOvertimeAllowance" value="' + nightOvertimeDefault + '" min="0" inputmode="numeric" style="width:100px;padding:3px 5px;font-size:12px;text-align:right;border:1.5px solid #f57f17;border-radius:4px;" /></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;margin-bottom:3px;"><span>通勤手当(課税)</span><input type="number" id="psCommuteTaxable" value="' + commuteTaxable + '" min="0" inputmode="numeric" style="width:100px;padding:3px 5px;font-size:12px;text-align:right;border:1px solid #ccc;border-radius:4px;" /></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;margin-bottom:3px;"><span>通勤手当(非課)</span><input type="number" id="psCommuteNonTaxable" value="' + commuteNonTaxable + '" min="0" inputmode="numeric" style="width:100px;padding:3px 5px;font-size:12px;text-align:right;border:1px solid #ccc;border-radius:4px;" /></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px solid #999;">'
-    +   '<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#2e7d32;"><span>支給合計</span><span>¥' + totalGross.toLocaleString() + '</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:14px;font-weight:700;color:#2e7d32;"><span>支給合計</span><span id="psTotalGrossDisplay">¥' + (basicPay + nightPay + positionAllowance + overtimeAllowance + nightOvertimeDefault + commuteTaxable + commuteNonTaxable).toLocaleString() + '</span></div>'
     + '</div>';
 
   // ★ Claude (2026-07-08): 全アルバイト共通の控除入力欄（デフォルト0、必要時のみ入力）
@@ -4542,6 +4568,21 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
 
   box.innerHTML = html;
 
+  // ★ Claude (2026-07-14): 手当入力の変更で支給合計をリアルタイム更新
+  const _allowanceIds = ['psPositionAllowance', 'psOvertimeAllowance', 'psNightOvertimeAllowance', 'psCommuteTaxable', 'psCommuteNonTaxable'];
+  const _updateGrossDisplay = function() {
+    const sum = _allowanceIds.reduce(function(acc, id) {
+      const el = document.getElementById(id);
+      return acc + (parseInt(el && el.value, 10) || 0);
+    }, basicPay + nightPay);
+    const dispEl = document.getElementById('psTotalGrossDisplay');
+    if (dispEl) dispEl.textContent = '¥' + sum.toLocaleString();
+  };
+  _allowanceIds.forEach(function(id) {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', _updateGrossDisplay);
+  });
+
   document.getElementById('psConfirmBtn').onclick = async function() {
     const btn = this;
     const resultEl = document.getElementById('psResult');
@@ -4549,6 +4590,14 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     btn.textContent = '⏳ 送信中...';
     resultEl.style.color = '#ef6c00';
     resultEl.textContent = '';
+
+    // ★ Claude (2026-07-14): 手当5種を取得（マスタ値 or ユーザー編集値）
+    const positionAllowanceVal = parseInt(document.getElementById('psPositionAllowance').value, 10) || 0;
+    const overtimeAllowanceVal = parseInt(document.getElementById('psOvertimeAllowance').value, 10) || 0;
+    const nightOvertimeAllowanceVal = parseInt(document.getElementById('psNightOvertimeAllowance').value, 10) || 0;
+    const commuteTaxableVal = parseInt(document.getElementById('psCommuteTaxable').value, 10) || 0;
+    const commuteNonTaxableVal = parseInt(document.getElementById('psCommuteNonTaxable').value, 10) || 0;
+    const totalGross = basicPay + nightPay + positionAllowanceVal + overtimeAllowanceVal + nightOvertimeAllowanceVal + commuteTaxableVal + commuteNonTaxableVal;
 
     // ★ Claude (2026-07-08): 全アルバイト共通の控除処理（0のままなら手取り = 支給）
     const incomeTax = parseInt(document.getElementById('psIncomeTax').value, 10) || 0;
@@ -4561,6 +4610,13 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     const totalWorkTime = Math.floor(totalMin / 60) + ':' + String(totalMin % 60).padStart(2, '0') + ':00';
 
     const confirmMsg = yearMonthStr + ' ' + staffName + 'さんの給料を確定します。\n\n'
+                     + '基本給: ¥' + basicPay.toLocaleString() + '\n'
+                     + '深夜手当: ¥' + nightPay.toLocaleString() + '\n'
+                     + (positionAllowanceVal > 0 ? '役職手当: ¥' + positionAllowanceVal.toLocaleString() + '\n' : '')
+                     + (overtimeAllowanceVal > 0 ? '残業手当: ¥' + overtimeAllowanceVal.toLocaleString() + '\n' : '')
+                     + (nightOvertimeAllowanceVal > 0 ? '深夜残業手当: ¥' + nightOvertimeAllowanceVal.toLocaleString() + '\n' : '')
+                     + (commuteTaxableVal > 0 ? '通勤手当(課税): ¥' + commuteTaxableVal.toLocaleString() + '\n' : '')
+                     + (commuteNonTaxableVal > 0 ? '通勤手当(非課): ¥' + commuteNonTaxableVal.toLocaleString() + '\n' : '')
                      + '支給合計: ¥' + totalGross.toLocaleString() + '\n'
                      + (totalDeduction > 0
                          ? '控除合計: ¥' + totalDeduction.toLocaleString() + '\n'
@@ -4588,6 +4644,11 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
         nightHourlyRate: nightHourlyRate,
         basicPay: basicPay,
         nightPay: nightPay,
+        positionAllowance: positionAllowanceVal,
+        overtimeAllowance: overtimeAllowanceVal,
+        nightOvertimeAllowance: nightOvertimeAllowanceVal,
+        commuteTaxable: commuteTaxableVal,
+        commuteNonTaxable: commuteNonTaxableVal,
         totalGross: totalGross,
         incomeTax: incomeTax,
         residentialTax: residentialTax,
