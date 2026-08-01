@@ -4504,16 +4504,21 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
   }
   const salaryType = emp.salaryType || '';
   const section = emp.section || '';
-  // ★ Claude (2026-07-14): 正社員・専従者（月給）も給料明細を見られるように
-  //   区分/給与形式で判定 → 時給系（アルバイト） or 月給系（正社員/専従者）
-  const isHourly = salaryType.indexOf('時給') >= 0 || salaryType.indexOf('アルバイト') >= 0;
+  // ★ Claude (2026-07-14): アルバイト・正社員・専従者・事業主 全区分で給料明細対応
+  //   区分/給与形式で計算方法だけ切替（時給 or 月給）
+  const isHourly = salaryType.indexOf('時給') >= 0
+    || (section.indexOf('アルバイト') >= 0 && salaryType.indexOf('月給') < 0);
   const isMonthly = salaryType.indexOf('月給') >= 0
-    || section.indexOf('正社員') >= 0 || section.indexOf('専従者') >= 0;
+    || section.indexOf('正社員') >= 0
+    || section.indexOf('専従者') >= 0
+    || section.indexOf('事業主') >= 0;
   const isSpecialAlbait = salaryType.indexOf('特殊') >= 0 || section.indexOf('特殊') >= 0;
   const isRegular = section.indexOf('正社員') >= 0;
   const isSpecialistFamily = section.indexOf('専従者') >= 0;
+  const isOwner = section.indexOf('事業主') >= 0;
+  // ★ 完全に空 or 想定外区分の場合のみブロック（従業員マスタに登録されていれば基本表示）
   if (!isHourly && !isMonthly) {
-    box.innerHTML = '<span style="color:var(--muted);">対象外（給与形式:' + escapeAttr(salaryType || '未設定') + ' / 区分:' + escapeAttr(section || '未設定') + '）→ 給料確定機能はアルバイト・正社員・専従者のみ対応</span>';
+    box.innerHTML = '<span style="color:var(--muted);">給与形式・区分が未設定のため給料明細を表示できません（給与形式:' + escapeAttr(salaryType || '未設定') + ' / 区分:' + escapeAttr(section || '未設定') + '）</span>';
     return;
   }
   // ★ Claude (2026-07-08): 全アルバイトで控除入力欄を常時表示（デフォルト0）
@@ -4541,7 +4546,7 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
   const basicPayLabel = isMonthly ? '基本給（月給）' : '基本給（時間×時給）';
   const sectionBadge = section
     ? '<span style="margin-left:4px;font-size:10px;padding:1px 5px;background:'
-      + (isRegular ? '#1976d2' : isSpecialistFamily ? '#7b1fa2' : isSpecialAlbait ? '#c62828' : '#2e7d32')
+      + (isOwner ? '#d84315' : isRegular ? '#1976d2' : isSpecialistFamily ? '#7b1fa2' : isSpecialAlbait ? '#c62828' : '#2e7d32')
       + ';color:#fff;border-radius:4px;">' + escapeAttr(section) + '</span>'
     : '';
 
