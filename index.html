@@ -4435,7 +4435,7 @@ function _renderStaffHistoryDetailInner(data, showRefreshing) {
       html += '<div class="hist-summary" style="background:#ffebee;color:#c62828;"><span>予定（未来）</span><span>' + plannedDays + '日 / ' + fmtH(plannedMin) + ' / 深夜 ' + fmtH(plannedNightMin) + '</span></div>';
     }
     // ★ Claude (2026-07-08): 管理者専用「給料確定」セクションを詳細末尾に追加
-    if (currentUser && currentUser.isAdmin && actualDays > 0) {
+    if (currentUser && currentUser.isAdmin) {
       html += '<div id="paySlipConfirmSection" style="margin-top:12px;padding:10px;background:#fffde7;border:1px solid #f9a825;border-radius:8px;">'
            +   '<div style="font-size:12px;font-weight:700;color:#e65100;margin-bottom:6px;">💰 給料確定（管理者のみ）</div>'
            +   '<div id="paySlipContent" style="font-size:12px;color:var(--muted);">読み込み中...</div>'
@@ -4447,7 +4447,7 @@ function _renderStaffHistoryDetailInner(data, showRefreshing) {
     }
     content.innerHTML = html;
     // 給料確定セクションの中身を非同期で描画
-    if (currentUser && currentUser.isAdmin && actualDays > 0) {
+    if (currentUser && currentUser.isAdmin) {
       try { renderPaySlipConfirm(_staffHistoryDetailState.name, _staffHistoryDetailState.year, _staffHistoryDetailState.month, actualDays, totalMin, totalNightMin); } catch (e) { console.error('renderPaySlipConfirm error:', e); }
     }
   }
@@ -4556,7 +4556,7 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>📅 対象月</span><strong>' + yearMonthStr + '</strong></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;"><span>💼 給与形式</span><strong style="color:' + (isMonthly ? '#1976d2' : isSpecialAlbait ? '#c62828' : '#2e7d32') + ';">' + escapeAttr(salaryType) + '</strong></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
-    +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>出勤日数</span><span>' + workDays + '日</span></div>'
+    +   '<div style="display:flex;justify-content:space-between;font-size:12px;align-items:center;"><span>出勤日数</span><span><input type="number" id="psWorkDays" value="' + workDays + '" min="0" max="31" inputmode="numeric" style="width:60px;padding:3px 5px;font-size:12px;text-align:right;border:1px solid #ccc;border-radius:4px;" />日</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>労働時間</span><span>' + totalHours.toFixed(2) + 'h</span></div>'
     +   '<div style="display:flex;justify-content:space-between;font-size:12px;"><span>深夜時間</span><span>' + nightHours.toFixed(2) + 'h</span></div>'
     +   '<hr style="margin:6px 0;border:none;border-top:1px dashed #ccc;">'
@@ -4613,6 +4613,8 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     resultEl.style.color = '#ef6c00';
     resultEl.textContent = '';
 
+    // ★ Claude (2026-07-14): 出勤日数を編集値から取得（0日でも受け付ける）
+    const workDaysVal = parseInt(document.getElementById('psWorkDays').value, 10) || 0;
     // ★ Claude (2026-07-14): 手当5種を取得（マスタ値 or ユーザー編集値）
     const positionAllowanceVal = parseInt(document.getElementById('psPositionAllowance').value, 10) || 0;
     const overtimeAllowanceVal = parseInt(document.getElementById('psOvertimeAllowance').value, 10) || 0;
@@ -4658,7 +4660,7 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
         yearMonth: yearMonthStr,
         employeeName: staffName,
         salaryType: salaryType,
-        workDays: workDays,
+        workDays: workDaysVal,
         totalWorkTime: totalWorkTime,
         totalHours: totalHours.toFixed(2),
         nightHours: nightHours.toFixed(2),
