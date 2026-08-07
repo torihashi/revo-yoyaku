@@ -6327,10 +6327,16 @@ function updateSyncStatus(text, color) {
 // ============================================================
 // 状態管理
 // ============================================================
+// ★ Claude (2026-08-07): 現店舗の「席のみ」コースIDを返す（鳥はし='S' / リボ='RS'）
+function getDefaultCourseId() {
+  return (typeof currentStore !== 'undefined' && currentStore === 'revolverd') ? 'RS' : 'S';
+}
+
 let state = {
   step: 1,
   date: '', time: '', people: 2,
-  selectedCourse: null,
+  // ★ Claude (2026-08-07): デフォルトは「席のみ」（S: 鳥はし / RS: リボ）
+  selectedCourse: 'S',
   availabilityChecked: false,
   candidateSeats: [],
 };
@@ -6364,6 +6370,8 @@ function setCurrentStore(store) {
   });
   // body色変更（ヘッダーや theme color のため）
   document.body.setAttribute('data-store', store);
+  // ★ Claude (2026-08-07): 店舗切替時、デフォルト「席のみ」コースIDを合わせる
+  state.selectedCourse = getDefaultCourseId();
   // 全関連UIを再描画
   try { renderReservationList(); } catch (e) {}
   try { renderSeatMap(); } catch (e) {}
@@ -8460,7 +8468,8 @@ function confirmReservation() {
     const adultCount = Math.max(0, (parseInt(state.people, 10) || 0) - kidInfant - kidElementary);
     const course = getCourses().find(function(c) { return c.id === state.selectedCourse; });
     if (!course) {
-      state.selectedCourse = null;
+      // ★ Claude (2026-08-07): デフォルトは「席のみ」
+      state.selectedCourse = getDefaultCourseId();
       if (typeof renderCourseGrid === 'function') renderCourseGrid();
       alert('選択中のコースを読み込めませんでした。もう一度コースを選択してください。');
       return;
@@ -8744,7 +8753,8 @@ function closeModalAndReset() {
   if (state.activeOverlay) state.activeOverlay.remove();
   state.activeOverlay = null;
   state.pending = null;
-  state.selectedCourse = null;
+  // ★ Claude (2026-08-07): デフォルトは「席のみ」
+  state.selectedCourse = getDefaultCourseId();
   state.candidateSeats = [];
   state.preselectedSeat = null;
   if (typeof updatePreselectBanner === 'function') updatePreselectBanner();
