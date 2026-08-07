@@ -5687,6 +5687,35 @@ function inferCourseFromCalendar(title, description, store) {
   const raw = String(title || '') + '\n' + String(description || '');
   const text = normalizeCourseTextForMatch(raw);
   const isRevo = store === 'revolverd';
+
+  // ★ Claude (2026-08-07): description 内の「コース: XXX」行を最優先で判定。
+  //   PWA編集は description に `コース: 席だけ` / `コース: クラフト飲み放題（6,600円）` を書くので、
+  //   これを authoritative に使うと keyword 推論の見落とし（席のみ／席だけ 等）を回避できる。
+  //   これまで席のみ(S/RS)への変更が他端末に伝わらない原因はここが無かったこと。
+  const descLine = String(description || '').split('\n')
+    .map(function(s) { return s.trim(); })
+    .find(function(s) { return /^コース\s*[：:]/.test(s); });
+  if (descLine) {
+    const val = descLine.replace(/^コース\s*[：:]\s*/, '').trim();
+    const nval = normalizeCourseTextForMatch(val);
+    if (isRevo) {
+      if (/^席(だけ|のみ)/.test(nval) || nval.indexOf('席だけ') >= 0 || nval.indexOf('席のみ') >= 0) return 'RS';
+      if (nval.indexOf('コラボクラフト') >= 0 || nval.indexOf('コラボ飲放') >= 0) return 'R4';
+      if (nval.indexOf('コラボ') >= 0) return 'R3';
+      if (nval.indexOf('クラフト飲み放題') >= 0 || nval.indexOf('クラフト') >= 0) return 'R2';
+      if (nval.indexOf('リボ飲') >= 0) return 'R1';
+      if (nval.indexOf('女子会') >= 0) return 'R5';
+    } else {
+      if (/^席(だけ|のみ)/.test(nval) || nval.indexOf('席だけ') >= 0 || nval.indexOf('席のみ') >= 0) return 'S';
+      if (nval.indexOf('7700') >= 0) return 'E';
+      if (nval.indexOf('6600') >= 0) return 'D';
+      if (nval.indexOf('5500') >= 0) return 'C';
+      if (nval.indexOf('3300') >= 0) return 'B';
+      if (nval.indexOf('2200') >= 0) return 'A';
+    }
+    // description に明示があったが上記に該当しない場合は null にせず、以降のタイトル推論に落とす
+  }
+
   if (isRevo) {
     // ★ Claude (2026-07-14): 判定順序修正
     //   旧: 「クラフト」を先にチェックしていたため「コラボクラフト」も R2 に誤判定 → 編集がすぐ元に戻る不具合
@@ -5696,6 +5725,8 @@ function inferCourseFromCalendar(title, description, store) {
     if (text.indexOf('クラフト飲み放題') >= 0 || text.indexOf('クラフト') >= 0) return 'R2';
     if (text.indexOf('リボ飲') >= 0 || text.indexOf('リボ飲み放題') >= 0) return 'R1';
     if (text.indexOf('女子会') >= 0) return 'R5';
+    // ★ Claude (2026-08-07): タイトルに「席だけ／席のみ」が入っている場合も RS に確定
+    if (text.indexOf('席だけ') >= 0 || text.indexOf('席のみ') >= 0) return 'RS';
     return null; // 不明はnull（既存値維持）
   } else {
     // 鳥はし：価格を優先。5,500 のようなカンマ表記や全角数字も normalize 済み。
@@ -5706,6 +5737,8 @@ function inferCourseFromCalendar(title, description, store) {
     if (text.indexOf('2200円') >= 0 || text.indexOf('2200') >= 0) return 'A';
     if (/飲み放題|飲放題|飲み放|呑み放題/.test(text)) return 'C';
     if (/料理のみ|料理コース|料理プラン/.test(text)) return 'A';
+    // ★ Claude (2026-08-07): 鳥はしも「席だけ／席のみ」を明示認識 → S
+    if (text.indexOf('席だけ') >= 0 || text.indexOf('席のみ') >= 0) return 'S';
     return null;
   }
 }
