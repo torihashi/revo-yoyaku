@@ -5762,29 +5762,69 @@ function escapeAttr(s) {
 //   - PWA直接作成   : `特記: …`
 //   - Yahoo!/AutoReserve取込（GAS側 integrated-import.gs）: `要望: …` / `アレルギー: …` / `お子様: …`
 //   これらが揃って `r.notes` に入るよう統合し、空 or "なし" は除外。複数行は ' / ' で結合する。
+// ★ Claude (2026-08-07): 備考/特記に改行が入ると GCal description のパースで
+//   2行目以降が捨てられる不具合対策。書き込み時に改行を「⏎」1文字に変換し、
+//   読み出し時に復元する。既存の生改行データも下の parseNotesFromDescription で
+//   複数行アキュムレータにより救済する。
+const NOTE_NEWLINE_MARKER = '⏎';
+function encodeNotesForGCal(s) {
+  return String(s == null ? '' : s).replace(/\r\n|\r|\n/g, NOTE_NEWLINE_MARKER);
+}
+function decodeNotesFromGCal(s) {
+  return String(s == null ? '' : s).replace(new RegExp(NOTE_NEWLINE_MARKER, 'g'), '\n');
+}
+
 function parseNotesFromDescription(desc) {
   if (!desc) return '';
-  const out = [];
-  const lines = String(desc).split('\n');
+  // description 中で「特記/要望/アレルギー/お子様」以外の既知フィールド。
+  // 特記 以降が改行を含む場合、次の既知フィールドに当たるまで蓄積する。
+  const boundaryKey = /^(?:予約ID|ステータス|人数|人数履歴|名前|お名前|コース|席|電話|受付|備考|受取日時|点数|合計|【商品内訳】)\s*[：:]|^-\s|^【/;
   const keyLabels = [
     { key: /^(?:特記)[：:]\s*/,       label: ''         },
     { key: /^(?:要望)[：:]\s*/,       label: '要望: '   },
     { key: /^(?:アレルギー)[：:]\s*/, label: 'アレルギー: ' },
     { key: /^(?:お子様)[：:]\s*/,     label: 'お子様: ' }
   ];
-  lines.forEach(function(raw) {
-    const line = (raw || '').trim();
-    if (!line) return;
-    for (let i = 0; i < keyLabels.length; i++) {
-      const m = keyLabels[i];
-      if (m.key.test(line)) {
-        const v = line.replace(m.key, '').trim();
-        // "なし" や空欄、"(GCalから自動取込)" などは除外
-        if (!v || v === 'なし' || /^\(GCalから自動取込\)$/.test(v)) return;
-        out.push(m.label + v);
-        return;
+  const rawLines = String(desc).split('\n');
+  // フェーズ1: マルチライン蓄積で { label, value } 配列に組み直す
+  const collected = [];
+  let cur = null;
+  const isAnyKeyStart = function(line) {
+    return keyLabels.some(function(m) { return m.key.test(line); });
+  };
+  for (let i = 0; i < rawLines.length; i++) {
+    const rawLine = rawLines[i];
+    const line = (rawLine || '').replace(/\r$/, '');
+    let matched = false;
+    for (let j = 0; j < keyLabels.length; j++) {
+      if (keyLabels[j].key.test(line.trim())) {
+        // 前の蓄積を確定
+        if (cur) { collected.push(cur); cur = null; }
+        cur = {
+          label: keyLabels[j].label,
+          value: line.trim().replace(keyLabels[j].key, '')
+        };
+        matched = true;
+        break;
       }
     }
+    if (matched) continue;
+    if (cur) {
+      // 空行 or 境界キーで確定して打ち切り
+      if (!line.trim()) { collected.push(cur); cur = null; continue; }
+      if (boundaryKey.test(line.trim())) { collected.push(cur); cur = null; continue; }
+      // 継続行として蓄積（生の改行を保持）
+      cur.value += '\n' + line;
+    }
+  }
+  if (cur) collected.push(cur);
+
+  // フェーズ2: 出力整形（⏎ を改行に戻す、"なし"/placeholder は除外、空はスキップ）
+  const out = [];
+  collected.forEach(function(item) {
+    const v = decodeNotesFromGCal(item.value).replace(/\s+$/, '');
+    if (!v || v === 'なし' || /^\(GCalから自動取込\)$/.test(v)) return;
+    out.push(item.label + v);
   });
   return out.join(' / ');
 }
@@ -7915,7 +7955,7 @@ async function _resendReservationUpdate(r) {
         '点数: ' + (r.count || 0) + '点',
         '合計: ' + (r.total || 0).toLocaleString() + '円',
         '受付: PWA直接（お土産）※編集再送',
-        '備考: ' + (r.notes || 'なし'),
+        '備考: ' + encodeNotesForGCal(r.notes || 'なし'),
         '',
         '【商品内訳】',
         itemLines.join('\n')
@@ -7952,7 +7992,7 @@ async function _resendReservationUpdate(r) {
       '席: ' + (r.seat || '未設定'),
       '電話: ' + (r.phone || ''),
       '受付: PWA直接 ※編集再送',
-      '特記: ' + (r.notes || 'なし')
+      '特記: ' + encodeNotesForGCal(r.notes || 'なし')
     ].join('\n');
     const resp = await callWebhook({
       action: 'update',
@@ -7993,7 +8033,7 @@ async function _resendReservationToGcal(r) {
         '点数: ' + (r.count || 0) + '点',
         '合計: ' + (r.total || 0).toLocaleString() + '円',
         '受付: PWA直接（お土産）※再送信',
-        '備考: ' + (r.notes || 'なし'),
+        '備考: ' + encodeNotesForGCal(r.notes || 'なし'),
         '',
         '【商品内訳】',
         itemLines.join('\n')
@@ -8046,7 +8086,7 @@ async function _resendReservationToGcal(r) {
       '席: ' + (r.seat || '未設定'),
       '電話: ' + (r.phone || ''),
       '受付: PWA直接 ※再送信',
-      '特記: ' + (r.notes || 'なし')
+      '特記: ' + encodeNotesForGCal(r.notes || 'なし')
     ].join('\n');
     const resp = await callWebhook({
       action: 'create',
@@ -8725,7 +8765,7 @@ function submitReservation() {
       '席: ' + data.seat,
       '電話: ' + data.phone,
       '受付: PWA直接',
-      '特記: ' + (data.notes || 'なし')
+      '特記: ' + encodeNotesForGCal(data.notes || 'なし')
     ].join('\n');
 
     callWebhook({
@@ -9451,7 +9491,7 @@ function openEditModal(resId) {
         '席: ' + (r.seat || '未設定'),
         '電話: ' + r.phone,
         '受付: PWA直接',
-        '特記: ' + (r.notes || 'なし')
+        '特記: ' + encodeNotesForGCal(r.notes || 'なし')
       ].join('\n');
       // ★ Claude (2026-07-14): 編集を GCal に同期。失敗時は _needsGcalUpdate フラグを立てて自動リトライ対象に。
       callWebhook({
@@ -9768,7 +9808,7 @@ function openTakeoutEditModal(resId) {
         '点数: ' + r.count + '点',
         '合計: ' + r.total.toLocaleString() + '円',
         '受付: PWA直接（お土産）',
-        '備考: ' + (r.notes || 'なし'),
+        '備考: ' + encodeNotesForGCal(r.notes || 'なし'),
         '',
         '【商品内訳】',
         itemLines.join('\n')
@@ -10761,7 +10801,7 @@ function submitTakeout() {
       '点数: ' + data.count + '点',
       '合計: ' + data.total.toLocaleString() + '円',
       '受付: PWA直接（お土産）',
-      '備考: ' + (data.notes || 'なし'),
+      '備考: ' + encodeNotesForGCal(data.notes || 'なし'),
       '',
       '【商品内訳】',
       lines.join('\n')
