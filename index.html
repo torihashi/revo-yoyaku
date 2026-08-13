@@ -2059,7 +2059,7 @@ select.time-select option:disabled { color: #aaa; }
          (2026-06-22 修正) 集計サマリの「上」に配置するため、サマリ行のすぐ上へ移動。 -->
     <div class="staff-rail" id="listStaffRail" style="margin-top:14px;">
       <div class="staff-rail-header">
-        <span>👥 本日のシフト <span id="listStaffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
+        <span>👥 <span class="staff-rail-title" id="listStaffRailTitle">本日のシフト</span> <span id="listStaffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
         <button type="button" class="staff-add-btn" onclick="openStaffShiftModal('list')">＋ シフト追加</button>
       </div>
       <div id="listStaffRailContent" class="staff-rail-content">
@@ -2163,7 +2163,7 @@ select.time-select option:disabled { color: #aaa; }
     <!-- スタッフシフト（バイトカレンダーから同期） -->
     <div class="staff-rail" id="staffRail">
       <div class="staff-rail-header">
-        <span>👥 本日のシフト <span id="staffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
+        <span>👥 <span class="staff-rail-title" id="staffRailTitle">本日のシフト</span> <span id="staffStoreLabel" style="font-size:11px;color:var(--muted);font-weight:normal"></span></span>
         <button type="button" class="staff-add-btn" onclick="openStaffShiftModal('seatmap')">＋ シフト追加</button>
       </div>
       <div id="staffRailContent" class="staff-rail-content">
@@ -5476,6 +5476,28 @@ function renderStaffRail() {
   const labelText = '【' + (currentStore === 'revolverd' ? 'リボ・バイト' : '鳥はしバイト') + '・' + date + '】';
   _getStaffRailLabels().forEach(function(el) { el.textContent = labelText; });
 
+  // ★ Claude (2026-08-07): 「本日のシフト」→ 表示中日付のシフトに動的更新
+  try {
+    const today = todayStr();
+    let titleText;
+    if (date === today) {
+      titleText = '本日のシフト';
+    } else {
+      const dParts = date.split('-');
+      if (dParts.length === 3) {
+        const dObj = new Date(parseInt(dParts[0], 10), parseInt(dParts[1], 10) - 1, parseInt(dParts[2], 10));
+        const dow = ['日','月','火','水','木','金','土'][dObj.getDay()];
+        titleText = parseInt(dParts[1], 10) + '/' + parseInt(dParts[2], 10) + '(' + dow + ')のシフト';
+      } else {
+        titleText = date + 'のシフト';
+      }
+    }
+    ['staffRailTitle', 'listStaffRailTitle'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = titleText;
+    });
+  } catch (e) {}
+
   _setStaffRailHtml('<div class="staff-empty">読み込み中...</div>');
 
   // 並行取得：カレンダーのシフト予定 + タイムカード実績
@@ -5772,6 +5794,41 @@ function encodeNotesForGCal(s) {
 }
 function decodeNotesFromGCal(s) {
   return String(s == null ? '' : s).replace(new RegExp(NOTE_NEWLINE_MARKER, 'g'), '\n');
+}
+
+// ★ Claude (2026-08-07): GCal description からキャンセルスタンプをパース。
+//   対応形式:
+//     "--- Yahoo キャンセル受信: 2026/08/07 15:30 (ID=xxx) ---"   (integrated-import.gs 由来)
+//     "--- AutoReserve キャンセル受信: ..."                       (同上)
+//     "--- ぐるなび キャンセル受信: ..."                           (同上)
+//     "--- PWA キャンセル: 2026/08/07 15:30（山田太郎） ---"       (pwa-webhook.gs 由来)
+//   戻り値: { at: number(ms) | null, by: 'yahoo'|'autoreserve'|'gnavi'|'pwa'|'gcal'|null, user: string | null }
+function parseCancellationStamp(desc) {
+  const out = { at: null, by: null, user: null };
+  if (!desc) return out;
+  const lines = String(desc).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    // 「--- <source> キャンセル(受信)?: yyyy/MM/dd HH:mm ... ---」
+    const m = line.match(/---\s*(Yahoo|AutoReserve|ぐるなび|PWA|pwa)\s*キャンセル(?:受信)?[:：]\s*(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})\s+(\d{1,2}):(\d{2})(?:[^-]*?（([^）]+)）)?/);
+    if (m) {
+      const src = m[1].toLowerCase();
+      out.by = src === 'ぐるなび' ? 'gnavi'
+             : src === 'yahoo' ? 'yahoo'
+             : src === 'autoreserve' ? 'autoreserve'
+             : 'pwa';
+      const y = parseInt(m[2], 10);
+      const mo = parseInt(m[3], 10) - 1;
+      const d = parseInt(m[4], 10);
+      const h = parseInt(m[5], 10);
+      const mi = parseInt(m[6], 10);
+      const dt = new Date(y, mo, d, h, mi, 0);
+      if (!isNaN(dt.getTime())) out.at = dt.getTime();
+      if (m[7]) out.user = m[7];
+      return out;
+    }
+  }
+  return out;
 }
 
 function parseNotesFromDescription(desc) {
@@ -6083,10 +6140,29 @@ function mergeFromCalendar(items) {
       }
       if (titleCancelled && existing.status !== 'cancelled') {
         existing.status = 'cancelled'; changed = true; cancelled++;
+        // ★ Claude (2026-08-07): キャンセル日時・元を記録（未記録の場合のみ）。
+        //   GCal description にキャンセルスタンプがあればそれを優先。
+        const stamp = parseCancellationStamp(ev.description || '');
+        if (!existing.cancelledAt) existing.cancelledAt = stamp.at || Date.now();
+        if (!existing.cancelledBy) existing.cancelledBy = stamp.by || 'gcal';
+        if (!existing.cancelledByUser && stamp.user) existing.cancelledByUser = stamp.user;
+      }
+      // 既にキャンセル済みでも、GCal 側にスタンプがあり local が空なら補完
+      if (existing.status === 'cancelled' && !existing.cancelledBy) {
+        const stamp2 = parseCancellationStamp(ev.description || '');
+        if (stamp2.at || stamp2.by) {
+          existing.cancelledAt = existing.cancelledAt || stamp2.at || Date.now();
+          existing.cancelledBy = stamp2.by || 'gcal';
+          if (stamp2.user) existing.cancelledByUser = stamp2.user;
+          changed = true;
+        }
       }
       // カレンダー側で [キャンセル] が外されたら PWA も復元
       if (!titleCancelled && existing.status === 'cancelled') {
         existing.status = 'confirmed'; changed = true; restored++;
+        // 復元時はキャンセル情報をクリア
+        delete existing.cancelledAt;
+        delete existing.cancelledBy;
       }
       if (peopleFromTitle && existing.people !== peopleFromTitle && existing.type !== 'takeout') {
         // ★ Claude (2026-06-22): GCal側で人数が変わった時も履歴に追加
@@ -9282,6 +9358,10 @@ function cancelReservation(resId) {
     : r.name + '様（' + r.date + ' ' + r.time + ' ' + r.people + '名）';
   if (!confirm(label + 'の予約をキャンセルしますか？')) return;
   r.status = 'cancelled';
+  // ★ Claude (2026-08-07): キャンセル日時・元を記録
+  r.cancelledAt = Date.now();
+  r.cancelledBy = 'pwa';
+  r.cancelledByUser = (typeof currentUser !== 'undefined' && currentUser && currentUser.name) ? currentUser.name : '';
   saveReservations();
   renderReservationList();
   if (typeof renderSeatMap === 'function') renderSeatMap();
@@ -9293,7 +9373,10 @@ function cancelReservation(resId) {
     callWebhook({
       action: 'cancel',
       store: r.store || 'torihashi',
-      eventId: r.gcalEventId
+      eventId: r.gcalEventId,
+      // ★ Claude (2026-08-07): キャンセル元・実行者を GCal description に記録
+      cancelledBy: 'PWA',
+      cancelledByUser: r.cancelledByUser || ''
     }).then(function(resp) {
       if (resp.ok) {
         updateSyncStatus('✓ キャンセル同期OK', '#2e7d32');
@@ -11215,10 +11298,33 @@ function renderReservationList() {
         const sumText = r.type === 'takeout'
           ? cancelMarkHtml + '🥡 ' + r.time + ' / ' + r.name + '様（お土産）'
           : cancelMarkHtml + r.time + ' / ' + r.people + '名 / ' + r.name + '様';
+        // ★ Claude (2026-08-07): キャンセル日時・元を表示
+        let cancelMeta = '';
+        if (r.cancelledAt || r.cancelledBy) {
+          const byLabel = r.cancelledBy === 'yahoo'       ? 'Yahoo!リザベ'
+                        : r.cancelledBy === 'autoreserve' ? 'AutoReserve'
+                        : r.cancelledBy === 'gnavi'       ? 'ぐるなび'
+                        : r.cancelledBy === 'pwa'         ? 'PWA'
+                        : r.cancelledBy === 'gcal'        ? 'カレンダー'
+                        :                                   '不明';
+          let stampText = '';
+          if (r.cancelledAt) {
+            const dt = new Date(r.cancelledAt);
+            const mm = dt.getMonth() + 1;
+            const dd = dt.getDate();
+            const hh = String(dt.getHours()).padStart(2,'0');
+            const mi = String(dt.getMinutes()).padStart(2,'0');
+            stampText = mm + '/' + dd + ' ' + hh + ':' + mi;
+          }
+          const userText = r.cancelledByUser ? '・' + r.cancelledByUser : '';
+          cancelMeta = '<span class="cancel-meta" style="font-size:10px;color:var(--muted);margin-left:6px;">'
+                    + '（' + byLabel + (stampText ? '・' + stampText : '') + userText + '）'
+                    + '</span>';
+        }
         return ''
           + '<div class="reservation-item cancelled-compact">'
           +   '<span class="cancel-tag">取消</span>'
-          +   '<span class="cancel-text">' + sumText + '</span>'
+          +   '<span class="cancel-text">' + sumText + cancelMeta + '</span>'
           +   '<button class="restore-link" onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
           + '</div>';
       }
@@ -11594,6 +11700,10 @@ function showTakeoutDetail(r) {
   document.getElementById('cancelTakeoutDetail').addEventListener('click', function() {
     if (confirm(r.name + '様のお土産予約をキャンセルしますか？')) {
       r.status = 'cancelled';
+      // ★ Claude (2026-08-07): キャンセル日時・元を記録
+      r.cancelledAt = Date.now();
+      r.cancelledBy = 'pwa';
+      r.cancelledByUser = (typeof currentUser !== 'undefined' && currentUser && currentUser.name) ? currentUser.name : '';
       saveReservations();
       overlay.remove();
       renderSeatMap();
