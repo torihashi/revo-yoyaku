@@ -360,12 +360,16 @@ button.secondary:active { background: var(--primary); color: white; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
-/* キャンセル予約：超コンパクト1行 */
+/* キャンセル予約：超コンパクト1行（展開可） */
 .reservation-item.cancelled-compact {
+  padding: 0;
+  background: #fafafa;
+  opacity: 0.85;
+}
+.reservation-item.cancelled-compact .ri-summary.cancelled-summary {
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px;
-  background: #fafafa;
-  opacity: 0.7;
+  cursor: pointer;
 }
 .reservation-item.cancelled-compact .cancel-text {
   flex: 1;
@@ -380,12 +384,28 @@ button.secondary:active { background: var(--primary); color: white; }
   padding: 1px 6px; border-radius: 5px;
   font-weight: 600; flex-shrink: 0;
 }
-.reservation-item.cancelled-compact .restore-link {
-  font-size: 11px; color: #2e7d32; font-weight: 600;
+.reservation-item.cancelled-compact .ri-expand {
+  color: var(--muted); font-size: 12px; flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.reservation-item.cancelled-compact.expanded .ri-expand { transform: rotate(180deg); }
+.reservation-item.cancelled-compact .ri-details {
+  display: none;
+  padding: 8px 12px 10px;
+  background: #fff;
+  border-top: 1px dashed #ddd;
+  opacity: 1;
+}
+.reservation-item.cancelled-compact.expanded .ri-details { display: block; }
+.reservation-item.cancelled-compact .ri-details .meta {
+  text-decoration: none;
+  color: var(--text);
+}
+.reservation-item.cancelled-compact .ri-details .actions button {
+  font-size: 12px; color: #2e7d32; font-weight: 600;
   background: transparent; border: 1px solid #2e7d32;
-  padding: 2px 8px; border-radius: 8px;
+  padding: 4px 12px; border-radius: 8px;
   cursor: pointer; font-family: inherit;
-  flex-shrink: 0;
 }
 .reservation-item:last-child { border-bottom: none; }
 .reservation-item .top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -11299,33 +11319,71 @@ function renderReservationList() {
           ? cancelMarkHtml + '🥡 ' + r.time + ' / ' + r.name + '様（お土産）'
           : cancelMarkHtml + r.time + ' / ' + r.people + '名 / ' + r.name + '様';
         // ★ Claude (2026-08-07): キャンセル日時・元を表示
-        let cancelMeta = '';
-        if (r.cancelledAt || r.cancelledBy) {
-          const byLabel = r.cancelledBy === 'yahoo'       ? 'Yahoo!リザベ'
-                        : r.cancelledBy === 'autoreserve' ? 'AutoReserve'
-                        : r.cancelledBy === 'gnavi'       ? 'ぐるなび'
-                        : r.cancelledBy === 'pwa'         ? 'PWA'
-                        : r.cancelledBy === 'gcal'        ? 'カレンダー'
-                        :                                   '不明';
-          let stampText = '';
-          if (r.cancelledAt) {
-            const dt = new Date(r.cancelledAt);
-            const mm = dt.getMonth() + 1;
-            const dd = dt.getDate();
-            const hh = String(dt.getHours()).padStart(2,'0');
-            const mi = String(dt.getMinutes()).padStart(2,'0');
-            stampText = mm + '/' + dd + ' ' + hh + ':' + mi;
-          }
-          const userText = r.cancelledByUser ? '・' + r.cancelledByUser : '';
-          cancelMeta = '<span class="cancel-meta" style="font-size:10px;color:var(--muted);margin-left:6px;">'
-                    + '（' + byLabel + (stampText ? '・' + stampText : '') + userText + '）'
-                    + '</span>';
+        const byLabel = r.cancelledBy === 'yahoo'       ? 'Yahoo!リザベ'
+                      : r.cancelledBy === 'autoreserve' ? 'AutoReserve'
+                      : r.cancelledBy === 'gnavi'       ? 'ぐるなび'
+                      : r.cancelledBy === 'pwa'         ? 'PWA'
+                      : r.cancelledBy === 'gcal'        ? 'カレンダー'
+                      :                                   '不明';
+        let stampText = '';
+        if (r.cancelledAt) {
+          const dt = new Date(r.cancelledAt);
+          const mm = dt.getMonth() + 1;
+          const dd = dt.getDate();
+          const hh = String(dt.getHours()).padStart(2,'0');
+          const mi = String(dt.getMinutes()).padStart(2,'0');
+          stampText = mm + '/' + dd + ' ' + hh + ':' + mi;
         }
+        const userText = r.cancelledByUser ? '・' + r.cancelledByUser : '';
+        const cancelMeta = (r.cancelledAt || r.cancelledBy)
+          ? '<span class="cancel-meta" style="font-size:10px;color:var(--muted);margin-left:6px;">'
+              + '（' + byLabel + (stampText ? '・' + stampText : '') + userText + '）'
+            + '</span>'
+          : '';
+
+        // ★ Claude (2026-08-07): 展開時の詳細を組立（元予約状況＋キャンセル状況）
+        const courseObj = course; // 上流で lookup 済み
+        const courseName = courseObj ? courseObj.name : (r.course || '');
+        const seatDisp = displaySeat(r.seat || '');
+        const kI = parseInt(r.kidInfant, 10) || 0;
+        const kE = parseInt(r.kidElementary, 10) || 0;
+        const adult = Math.max(0, (r.people || 0) - kI - kE);
+        const kidLine = (kI > 0 || kE > 0)
+          ? '<div class="meta">👶 内訳: 中学生以上 ' + adult + '名'
+              + (kE > 0 ? ' / 小学生 ' + kE + '名' : '')
+              + (kI > 0 ? ' / 幼児 ' + kI + '名' : '')
+            + '</div>'
+          : '';
+        const detailsHtml = ''
+          + '<div class="ri-details">'
+          +   (r.type === 'takeout'
+              ? '<div class="meta">🥡 お土産予約 ／ ' + (r.count || 0) + '点 ／ 合計 ' + (r.total || 0).toLocaleString() + '円</div>'
+              + '<div class="meta">☎ ' + (r.phone || '') + '</div>'
+              + (r.summary ? '<div class="meta">' + escHtml(r.summary) + '</div>' : '')
+              : '<div class="meta">👥 ' + (r.people || 0) + '名 ／ ⏰ ' + r.time + '</div>'
+              + '<div class="meta">🪑 席: ' + (seatDisp || '未設定') + (courseName ? ' ／ ' + escHtml(courseName) : '') + '</div>'
+              + '<div class="meta">☎ ' + (r.phone || '') + '</div>'
+              + kidLine)
+          +   (r.notes ? '<div class="meta">📝 ' + escHtml(r.notes).replace(/\n/g, '<br>') + '</div>' : '')
+          +   '<div class="meta" style="color:var(--muted);font-size:11px;">📅 登録: ' + formatCreatedAt(r.createdAt) + '</div>'
+          +   '<div class="meta" style="color:#c62828;font-size:12px;font-weight:600;margin-top:6px;padding-top:6px;border-top:1px dashed #f5c6c6;">'
+          +     '❌ キャンセル: ' + byLabel
+          +     (stampText ? ' ／ ' + stampText : '')
+          +     (r.cancelledByUser ? ' ／ ' + escHtml(r.cancelledByUser) : '')
+          +   '</div>'
+          +   '<div class="actions" style="margin-top:8px;">'
+          +     '<button onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
+          +   '</div>'
+          + '</div>';
+
         return ''
-          + '<div class="reservation-item cancelled-compact">'
-          +   '<span class="cancel-tag">取消</span>'
-          +   '<span class="cancel-text">' + sumText + cancelMeta + '</span>'
-          +   '<button class="restore-link" onclick="restoreReservation(\'' + r.id + '\')">🔄 復元</button>'
+          + '<div class="reservation-item cancelled-compact" data-rid="' + r.id + '">'
+          +   '<div class="ri-summary cancelled-summary" onclick="toggleResExpand(this)">'
+          +     '<span class="cancel-tag">取消</span>'
+          +     '<span class="cancel-text">' + sumText + cancelMeta + '</span>'
+          +     '<span class="ri-expand">▾</span>'
+          +   '</div>'
+          +   detailsHtml
           + '</div>';
       }
 
