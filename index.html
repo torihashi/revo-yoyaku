@@ -5753,6 +5753,13 @@ function inferCourseFromCalendar(title, description, store) {
   const descLine = String(description || '').split('\n')
     .map(function(s) { return s.trim(); })
     .find(function(s) { return /^コース\s*[：:]/.test(s); });
+  // ★ Claude (2026-08-07): ぐるなび取込は「コース種別: 飲み放題」の行があるので、これも判定材料に。
+  const descTypeLine = String(description || '').split('\n')
+    .map(function(s) { return s.trim(); })
+    .find(function(s) { return /^コース種別\s*[：:]/.test(s); });
+  const descTypeVal = descTypeLine ? normalizeCourseTextForMatch(descTypeLine.replace(/^コース種別\s*[：:]\s*/, '')) : '';
+  const isDrinkFromType = /飲み放題|飲放題|飲み放|呑み放題/.test(descTypeVal);
+  const isMealFromType  = /料理のみ|料理コース|料理プラン/.test(descTypeVal);
   if (descLine) {
     const val = descLine.replace(/^コース\s*[：:]\s*/, '').trim();
     const nval = normalizeCourseTextForMatch(val);
@@ -5763,6 +5770,8 @@ function inferCourseFromCalendar(title, description, store) {
       if (nval.indexOf('クラフト飲み放題') >= 0 || nval.indexOf('クラフト') >= 0) return 'R2';
       if (nval.indexOf('リボ飲') >= 0) return 'R1';
       if (nval.indexOf('女子会') >= 0) return 'R5';
+      // ★ Claude (2026-08-07): ぐるなび経由の汎用「飲み放題プラン」等 → デフォルト R1
+      if (/飲み放題|飲放題|飲み放|呑み放題/.test(nval) || isDrinkFromType) return 'R1';
     } else {
       if (/^席(だけ|のみ)/.test(nval) || nval.indexOf('席だけ') >= 0 || nval.indexOf('席のみ') >= 0) return 'S';
       if (nval.indexOf('7700') >= 0) return 'E';
@@ -5770,8 +5779,20 @@ function inferCourseFromCalendar(title, description, store) {
       if (nval.indexOf('5500') >= 0) return 'C';
       if (nval.indexOf('3300') >= 0) return 'B';
       if (nval.indexOf('2200') >= 0) return 'A';
+      // ★ Claude (2026-08-07): 価格が拾えなくても「飲み放題」文言があれば C（5500円）想定
+      if (/飲み放題|飲放題|飲み放|呑み放題/.test(nval) || isDrinkFromType) return 'C';
+      if (isMealFromType) return 'A';
     }
     // description に明示があったが上記に該当しない場合は null にせず、以降のタイトル推論に落とす
+  }
+  // ★ Claude (2026-08-07): コース: 行が無くても、コース種別: 行だけで判断
+  if (!descLine && descTypeVal) {
+    if (isRevo) {
+      if (isDrinkFromType) return 'R1';
+    } else {
+      if (isDrinkFromType) return 'C';
+      if (isMealFromType)  return 'A';
+    }
   }
 
   if (isRevo) {
@@ -6323,7 +6344,10 @@ function mergeFromCalendar(items) {
       const parsedName = parseNameFromTitle(cleanTitle) || parseNameFromDescription(ev.description || '');
       const name = parsedName || '不明';
       const isTakeout = cleanTitle.indexOf('🥡') === 0;
-      const inferredCourse = isTakeout ? 'S' : (inferCourseFromCalendar(cleanTitle, ev.description || '', ev.store || 'torihashi') || 'S');
+      // ★ Claude (2026-08-07): 推定失敗時のフォールバックを店舗別に。リボは RS、鳥はしは S。
+      const _evStore = ev.store || 'torihashi';
+      const _defaultCourse = _evStore === 'revolverd' ? 'RS' : 'S';
+      const inferredCourse = isTakeout ? _defaultCourse : (inferCourseFromCalendar(cleanTitle, ev.description || '', _evStore) || _defaultCourse);
       // ★ Claude (2026-06-21): 新規取込時は description から特記事項を復元してセット。
       //   見つからなければ空文字（プレースホルダ"(GCalから自動取込)"はリスト表示で本物の特記と区別しづらいので排除）。
       const parsedNotes = parseNotesFromDescription(ev.description || '');
@@ -11123,6 +11147,38 @@ function toggleResExpand(summaryEl) {
   item.classList.toggle('expanded');
 }
 
+// ★ Claude (2026-08-07): ぐるなび台帳への手動転記フラグを切替。
+//   イベント伝播を止めて（親カードの折りたたみを防ぐ）チェック状態を保存＋アクティビティログ。
+function toggleGnaviTransfer(evt, resId) {
+  if (evt) evt.stopPropagation();
+  const r = reservations.find(function(x) { return x.id === resId; });
+  if (!r) return;
+  const checked = evt && evt.target ? !!evt.target.checked : !r.gnaviTransferred;
+  r.gnaviTransferred = checked;
+  r.gnaviTransferredAt = checked ? Date.now() : null;
+  r.gnaviTransferredBy = checked
+    ? ((typeof currentUser !== 'undefined' && currentUser && currentUser.name) ? currentUser.name : '')
+    : '';
+  try { saveReservations(); } catch (e) {}
+  try {
+    if (typeof logActivity === 'function') {
+      logActivity(checked ? '🟢 ぐるなび転記チェック' : '⬜ ぐるなび転記解除',
+        r.name + '様 ' + r.date + ' ' + r.time,
+        (r.people || 0) + '名');
+    }
+  } catch (e) {}
+  // 展開状態を維持したまま再描画
+  try {
+    const item = document.querySelector('.reservation-item[data-rid="' + resId + '"]');
+    const wasExpanded = item && item.classList.contains('expanded');
+    if (typeof renderReservationList === 'function') renderReservationList();
+    if (wasExpanded) {
+      const newItem = document.querySelector('.reservation-item[data-rid="' + resId + '"]');
+      if (newItem) newItem.classList.add('expanded');
+    }
+  } catch (e) {}
+}
+
 // ★ Claude (2026-07-14): 登録日時を "yyyy/MM/dd HH:MM" 形式でフォーマット
 //   createdAt は Unix timestamp（ミリ秒）。 未設定なら「不明」を返す。
 function formatCreatedAt(ts) {
@@ -11572,6 +11628,21 @@ function renderReservationList() {
         +     (r.notes ? '<div class="meta">📝 ' + r.notes + '</div>' : '')
         // ★ Claude (2026-07-14): 最初に登録した日時を表示
         +     '<div class="meta" style="color:var(--muted);font-size:11px;">📅 登録: ' + formatCreatedAt(r.createdAt) + '</div>'
+        // ★ Claude (2026-08-07): PWA直接予約のみ「ぐるなび台帳転記」チェックボックス。
+        //   ぐるなび側で席を消し込んだかを追跡（手動運用の可視化）。
+        +     ((r.source === 'pwa' || !r.source) && r.type !== 'takeout'
+            ? '<div class="meta" style="margin-top:6px;padding:6px 8px;background:#f1f8e9;border:1px solid #c5e1a5;border-radius:6px;">'
+              + '<label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;color:#33691e;">'
+              +   '<input type="checkbox" ' + (r.gnaviTransferred ? 'checked ' : '')
+              +     'onclick="toggleGnaviTransfer(event, \'' + r.id + '\')" '
+              +     'style="width:16px;height:16px;cursor:pointer;" />'
+              +   '<span>🟢 ぐるなび台帳に転記済み</span>'
+              +   (r.gnaviTransferredAt
+                  ? '<span style="margin-left:auto;font-size:10px;color:var(--muted);">' + formatCreatedAt(r.gnaviTransferredAt) + '</span>'
+                  : '')
+              + '</label>'
+            + '</div>'
+            : '')
         +     '<div class="actions">'
         +       '<button onclick="openEditModal(\'' + r.id + '\')">✏️ 編集</button>'
         +       '<button onclick="openSeatEditor(\'' + r.id + '\')">🪑 席' + (pending ? '指定' : '変更') + '</button>'
