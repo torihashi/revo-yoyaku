@@ -5953,7 +5953,21 @@ function formatPeopleHistory(r) {
   series.forEach(function(n) {
     if (compact.length === 0 || compact[compact.length - 1] !== n) compact.push(n);
   });
-  return compact.join('→') + '名';
+  // ★ Claude (2026-08-07): 履歴が長すぎる場合は現在人数を必ず見えるように短縮表示。
+  //   4件を超えるとき: 「最初→…→前々→前→現在名」（4項目に圧縮、全履歴は title 属性でツールチップ）
+  //   4件以内: そのまま
+  const full = compact.join('→') + '名';
+  // 変更なし（履歴1件のみ）→ 数字だけ、ツールチップ不要
+  if (compact.length === 1) return full;
+  // 4件以内はそのまま、ツールチップに全履歴（アクセシビリティ）
+  if (compact.length <= 4) {
+    return '<span title="人数履歴: ' + full + '">' + full + '</span>';
+  }
+  // 5件以上は「最初→…→前2→前→現在名」に圧縮。全履歴はツールチップで参照可能。
+  const first = compact[0];
+  const tail = compact.slice(-3);
+  const short = first + '→…→' + tail.join('→') + '名';
+  return '<span title="人数履歴: ' + full + '" style="cursor:help;text-decoration:underline dotted;text-underline-offset:2px;">' + short + '</span>';
 }
 // description から「人数履歴: 12→10→13」を取り出す。無ければ null
 function parsePeopleHistoryFromDescription(desc) {
