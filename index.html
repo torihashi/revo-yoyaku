@@ -6354,7 +6354,45 @@ function mergeFromCalendar(items) {
       added++;
     }
   });
-  if (updated || added || cancelled || restored) {
+  // ★ Claude (2026-08-07): GCal で削除されたイベントを PWA からも削除する。
+  //   sync 範囲は「過去7日〜未来90日」（syncFromWebhook 参照）。
+  //   条件: (a) gcalEventId が紐付いている（＝いつか GCal から取得済みの予約）
+  //         (b) 予約日が sync 範囲内
+  //         (c) gcalEventId が今回の取得結果に無い（＝GCal で削除された）
+  //         (d) _needsGcalResend / _needsGcalUpdate フラグが立っていない（未同期の新規や編集は保護）
+  let purged = 0;
+  try {
+    const now = new Date();
+    const winStart = new Date(now); winStart.setDate(winStart.getDate() - 7);
+    const winEnd   = new Date(now); winEnd.setDate(winEnd.getDate() + 90);
+    const winStartStr = winStart.getFullYear() + '-'
+      + String(winStart.getMonth()+1).padStart(2,'0') + '-'
+      + String(winStart.getDate()).padStart(2,'0');
+    const winEndStr = winEnd.getFullYear() + '-'
+      + String(winEnd.getMonth()+1).padStart(2,'0') + '-'
+      + String(winEnd.getDate()).padStart(2,'0');
+    const gcalIdSet = {};
+    items.forEach(function(ev) { if (ev && ev.id) gcalIdSet[ev.id] = true; });
+    const keep = [];
+    reservations.forEach(function(r) {
+      if (!r) return;
+      const inWindow = r.date && r.date >= winStartStr && r.date <= winEndStr;
+      if (r.gcalEventId
+          && inWindow
+          && !gcalIdSet[r.gcalEventId]
+          && !r._needsGcalResend
+          && !r._needsGcalUpdate) {
+        purged++;
+        return; // 削除
+      }
+      keep.push(r);
+    });
+    if (purged > 0) {
+      reservations = keep;
+    }
+  } catch (e) { console.warn('purge step failed:', e); }
+
+  if (updated || added || cancelled || restored || purged) {
     saveReservations();
     if (typeof renderReservationList === 'function') {
       try { renderReservationList(); } catch (e) {}
@@ -6363,7 +6401,7 @@ function mergeFromCalendar(items) {
       try { renderSeatMap(); } catch (e) {}
     }
   }
-  return { updated: updated, added: added, cancelled: cancelled, restored: restored, total: items.length };
+  return { updated: updated, added: added, cancelled: cancelled, restored: restored, purged: purged, total: items.length };
 }
 
 // 手動同期ボタン用
@@ -6412,7 +6450,8 @@ function pullFromCalendar(isManual) {
       try { renderStaffRail(); } catch (e) {}
       const msg = '✓ 取得 ' + result.total + '件 / 更新 ' + result.updated
                 + ' / 新規 ' + result.added + ' / 取消 ' + result.cancelled
-                + ' / 復元 ' + (result.restored || 0);
+                + ' / 復元 ' + (result.restored || 0)
+                + ' / 削除 ' + (result.purged || 0);
       updateSyncStatus(msg, '#2e7d32');
       setTimeout(function() { updateSyncStatus(''); }, 5000);
       const now = new Date();
