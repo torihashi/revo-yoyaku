@@ -10049,18 +10049,22 @@ function openTakeoutItemPicker(store, onSelect) {
     alert('商品マスタが読み込めませんでした');
     return;
   }
-  // 現店舗向けの絞り込み（鳥はし=鳥料理/お弁当系、リボルバード=リボ系）
+  // ★ Claude (2026-08-07): 店舗による絞込を撤廃。全カテゴリのタブを常時表示し、
+  //   ユーザーがタブでカテゴリを切り替えて選べるようにする。
+  //   （旧: 店舗フィルタで リボピザが打てないケースがあった。r.store 未設定・
+  //     編集時の currentStore が torihashi 等で リボカテゴリが除外されていた。）
   const isRevo = store === 'revolverd';
-  const products = TAKEOUT_PRODUCTS.filter(function(p) {
-    if (isRevo) return p.cat === 'リボルバード';
-    return p.cat !== 'リボルバード';
-  });
-  // カテゴリ一覧
+  const products = TAKEOUT_PRODUCTS.slice();
+  // カテゴリ一覧（全て）
   const cats = [];
   products.forEach(function(p) {
     if (cats.indexOf(p.cat) < 0) cats.push(p.cat);
   });
-  let currentCat = cats[0] || '';
+  // デフォルトタブ: 店舗に応じて選ぶ（無ければ先頭）
+  const defaultCat = isRevo
+    ? (cats.indexOf('リボルバード') >= 0 ? 'リボルバード' : cats[0])
+    : (cats.indexOf('鳥料理') >= 0 ? '鳥料理' : cats[0]);
+  let currentCat = defaultCat || '';
 
   const existing = document.getElementById('tkItemPickerOverlay');
   if (existing) existing.remove();
