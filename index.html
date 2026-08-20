@@ -2505,7 +2505,7 @@ const REVO_COURSES = [
   { id:'R1', name:'リボ飲み放題',        shortName:'リボ飲放',    price:0, items:'—', minPeople:2, type:'飲み放題',         note:'リボルバード定番ドリンク' },
   { id:'R2', name:'クラフト飲み放題',    shortName:'クラフト',    price:0, items:'—', minPeople:2, type:'クラフト飲み放題', note:'クラフトビール含む' },
   { id:'R3', name:'コラボプラン',        shortName:'コラボ',      price:0, items:'—', minPeople:2, type:'コラボ',           note:'鳥はしコラボ' },
-  { id:'R4', name:'コラボクラフトプラン', shortName:'コラボ飲放',  price:0, items:'—', minPeople:2, type:'コラボクラフト',   note:'クラフトビール付き' },
+  { id:'R4', name:'Pコラボプラン',        shortName:'Pコラボ',      price:0, items:'—', minPeople:2, type:'Pコラボ',           note:'プレミアム・コラボ' },
   { id:'R5', name:'女子会プラン',        shortName:'女子会',      price:0, items:'—', minPeople:3, type:'女子会',           note:'女子向けセット' },
 ];
 
@@ -5765,6 +5765,10 @@ function inferCourseFromCalendar(title, description, store) {
     const nval = normalizeCourseTextForMatch(val);
     if (isRevo) {
       if (/^席(だけ|のみ)/.test(nval) || nval.indexOf('席だけ') >= 0 || nval.indexOf('席のみ') >= 0) return 'RS';
+      // ★ Claude (2026-08-07): R4 の名称を「コラボクラフト」→「Pコラボ」に改名。
+      //   Pコラボ / コラボクラフト / コラボ飲放 のいずれでも R4 と判定。
+      //   Pコラボ を「コラボ」より前にチェックしないと R3 に流れるので順序重要。
+      if (nval.indexOf('Pコラボ') >= 0 || nval.toLowerCase().indexOf('pコラボ') >= 0) return 'R4';
       if (nval.indexOf('コラボクラフト') >= 0 || nval.indexOf('コラボ飲放') >= 0) return 'R4';
       if (nval.indexOf('コラボ') >= 0) return 'R3';
       if (nval.indexOf('クラフト飲み放題') >= 0 || nval.indexOf('クラフト') >= 0) return 'R2';
@@ -5798,7 +5802,9 @@ function inferCourseFromCalendar(title, description, store) {
   if (isRevo) {
     // ★ Claude (2026-07-14): 判定順序修正
     //   旧: 「クラフト」を先にチェックしていたため「コラボクラフト」も R2 に誤判定 → 編集がすぐ元に戻る不具合
-    //   新: より具体的なパターン（コラボクラフト）から先にチェック
+    //   新: より具体的なパターン（Pコラボ→コラボクラフト→コラボ）から先にチェック
+    // ★ Claude (2026-08-07): R4 の新名称「Pコラボ」も認識
+    if (text.indexOf('Pコラボ') >= 0 || text.toLowerCase().indexOf('pコラボ') >= 0) return 'R4';
     if (text.indexOf('コラボクラフト') >= 0 || text.indexOf('コラボ飲放') >= 0) return 'R4';
     if (text.indexOf('コラボ') >= 0) return 'R3';
     if (text.indexOf('クラフト飲み放題') >= 0 || text.indexOf('クラフト') >= 0) return 'R2';
