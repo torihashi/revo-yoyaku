@@ -5716,7 +5716,12 @@ function syncFromWebhook(callback) {
       storesOk++;
     }
     if (storesOk > 0) {
-      const mergeResult = mergeFromCalendar(totalItems);
+      // ★ Claude (2026-08-07): 成功した店舗の一覧を purge スコープとして渡す。
+      //   （片方の店舗の fetch が失敗した状態で purge すると、その店舗の予約が誤削除される）
+      const syncedStores = {};
+      if (toriRes && toriRes.ok) syncedStores.torihashi = true;
+      if (revoRes && revoRes.ok) syncedStores.revolverd = true;
+      const mergeResult = mergeFromCalendar(totalItems, syncedStores);
       if (callback) callback(true, mergeResult);
     } else {
       if (callback) callback(false, { error: 'both stores failed', tori: toriRes, revo: revoRes });
@@ -6141,7 +6146,7 @@ function parseTakeoutDescription(desc) {
   return out;
 }
 
-function mergeFromCalendar(items) {
+function mergeFromCalendar(items, syncedStores) {
   let updated = 0, added = 0, cancelled = 0, restored = 0;
   items.forEach(function(ev) {
     // ★ Claude (2026-06-22): まず gcalEventId で突合。見つからなければ description の「予約ID:」
@@ -6404,6 +6409,8 @@ function mergeFromCalendar(items) {
   //         (b) 予約日が sync 範囲内
   //         (c) gcalEventId が今回の取得結果に無い（＝GCal で削除された）
   //         (d) _needsGcalResend / _needsGcalUpdate フラグが立っていない（未同期の新規や編集は保護）
+  //         (e) その予約の店舗が今回の sync 範囲に含まれている（片方失敗時の誤削除防止）
+  //         (f) 「取込後 grace period（例: 60秒）」が経過している（応答遅延との競合防止）
   let purged = 0;
   try {
     const now = new Date();
@@ -6417,22 +6424,44 @@ function mergeFromCalendar(items) {
       + String(winEnd.getDate()).padStart(2,'0');
     const gcalIdSet = {};
     items.forEach(function(ev) { if (ev && ev.id) gcalIdSet[ev.id] = true; });
+    const stores = syncedStores || { torihashi: true, revolverd: true }; // 後方互換
+    const GRACE_MS = 60 * 1000; // 作成直後の誤削除防止
+    let resendMarked = 0;
     const keep = [];
     reservations.forEach(function(r) {
       if (!r) return;
       const inWindow = r.date && r.date >= winStartStr && r.date <= winEndStr;
+      const rStore = r.store || 'torihashi';
+      const storeSynced = !!stores[rStore];
+      const isRecent = r.createdAt && (Date.now() - r.createdAt) < GRACE_MS;
       if (r.gcalEventId
           && inWindow
+          && storeSynced
           && !gcalIdSet[r.gcalEventId]
           && !r._needsGcalResend
-          && !r._needsGcalUpdate) {
+          && !r._needsGcalUpdate
+          && !isRecent) {
+        // ★ Claude (2026-08-07): PWA直接入力の予約は「幽霊 gcalEventId」の可能性が高いので、
+        //   削除ではなく再送信対象にマーク（→ auto-retry が GCal に再作成する）。
+        //   取込系（yahoo/autoreserve/gnavi）は GCal を真実として扱うので削除でOK。
+        if (r.source === 'pwa' || !r.source) {
+          delete r.gcalEventId;
+          r._needsGcalResend = true;
+          resendMarked++;
+          keep.push(r);
+          return;
+        }
         purged++;
         return; // 削除
       }
       keep.push(r);
     });
-    if (purged > 0) {
+    if (purged > 0 || resendMarked > 0) {
       reservations = keep;
+    }
+    if (resendMarked > 0) {
+      // 少し遅らせて自動リトライを発火
+      setTimeout(function() { try { _autoRetryGhostReservations(); } catch (e) {} }, 800);
     }
   } catch (e) { console.warn('purge step failed:', e); }
 
@@ -8199,6 +8228,17 @@ async function _resendReservationUpdate(r) {
       start: startDate.toISOString(),
       end: endDate.toISOString()
     });
+    // ★ Claude (2026-08-07): GCal イベントが見つからない場合は「幽霊 gcalEventId」
+    //   なので、gcalEventId をクリアして新規作成にフォールバック。
+    //   これにより「PWA には見えるが GCal には無い」予約が自動復旧する。
+    if (resp && !resp.ok && resp.error && /not found|見つかりません/i.test(String(resp.error))) {
+      delete r.gcalEventId;
+      r._needsGcalResend = true;
+      delete r._needsGcalUpdate;
+      try { saveReservations(); } catch (e) {}
+      // すぐに新規作成を試みる
+      return await _resendReservationToGcal(r);
+    }
     return !!(resp && resp.ok);
   } catch (e) {
     console.error('_resendReservationUpdate failed:', e);
@@ -11530,9 +11570,14 @@ function renderReservationList() {
       if (r.type === 'takeout') {
         // ★ Claude (2026-06-22): 仮押さえ撤廃により「仮」バッジは常に非表示。コードは互換のため残置。
         const statusTag = '';
-        // ★ Claude (2026-06-21): 特記事項があれば小アイコンで可視化
-        const pendingSyncIcon = r._needsGcalUpdate
-          ? '<span class="ri-notes-icon" title="編集が未同期です。オンライン復帰後に自動で反映されます。" style="background:#fff3e0;color:#e65100;padding:0 4px;border-radius:4px;font-size:10px;">⏳</span>'
+        // ★ Claude (2026-08-07): 未同期マークの条件を拡張。
+        //   _needsGcalUpdate（編集失敗）、_needsGcalResend（新規作成失敗）、
+        //   および PWA作成 + gcalEventId 無し（webhook応答が遅延/失敗した幽霊予約）を対象に。
+        const _isGhost = (r.source === 'pwa' || !r.source) && !r.gcalEventId && r.type !== 'takeout';
+        const pendingSyncIcon = (r._needsGcalUpdate || r._needsGcalResend || _isGhost)
+          ? '<span class="ri-notes-icon" title="'
+            + (r._needsGcalUpdate ? '編集が未同期です' : '新規予約が未同期です')
+            + '。オンライン復帰後に自動で反映されます。" style="background:#ffebee;color:#c62828;padding:0 4px;border-radius:4px;font-size:10px;font-weight:600;">⏳未同期</span>'
           : '';
         const notesIcon = pendingSyncIcon + ((r.notes && String(r.notes).trim())
           ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
@@ -11607,10 +11652,21 @@ function renderReservationList() {
       }
       const metaCourseLabel = noteLabel && seatOnlyCourse ? noteLabel : (course && course.name ? course.name : '');
       const nameWithMark = (sourceMark ? '<span title="' + sourceTitle + '" style="margin-right:3px">' + sourceMark + '</span>' : '') + r.name + '様';
-      // ★ Claude (2026-06-21): 特記事項があれば小アイコンを表示。tooltip(title属性)に本文を入れて長押し/ホバーで確認可能。
-      const notesIcon = (r.notes && String(r.notes).trim())
-        ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+      // ★ Claude (2026-08-07): 通常予約にも「未同期」マークを追加。
+      //   マネージャーが作成した予約が実は GCal に到達していなかった（他端末に見えない）
+      //   ケースを可視化するため、gcalEventId が無い PWA予約 or リトライフラグ立ち中を対象。
+      const _needsSyncNormal = (r.source === 'pwa' || !r.source)
+        && (r._needsGcalUpdate || r._needsGcalResend || !r.gcalEventId);
+      const pendingSyncIconN = _needsSyncNormal
+        ? '<span class="ri-notes-icon" title="'
+          + (r._needsGcalUpdate ? '編集が未同期です' : '新規予約が未同期です')
+          + '。「🔄 カレンダーから取得」タップで再送信されます。" '
+          + 'style="background:#ffebee;color:#c62828;padding:0 4px;border-radius:4px;font-size:10px;font-weight:600;">⏳未同期</span>'
         : '';
+      // ★ Claude (2026-06-21): 特記事項があれば小アイコンを表示。tooltip(title属性)に本文を入れて長押し/ホバーで確認可能。
+      const notesIcon = pendingSyncIconN + ((r.notes && String(r.notes).trim())
+        ? '<span class="ri-notes-icon" title="' + escapeAttr(r.notes) + '">📝</span>'
+        : '');
       // ★ Claude (2026-06-22): 履歴があれば「12→10→13→11名」、無ければ「12名」
       const peopleLabel = formatPeopleHistory(r);
       return ''
@@ -11782,9 +11838,25 @@ function _renderSeatMapImpl() {
     cellTokens.forEach(function(t) { if (t !== seatId) collect(seatResList[t]); });
     mergedRes.sort(function(a, b) { return (a.time || '').localeCompare(b.time || ''); });
 
+    // ★ Claude (2026-08-07): 席のドラッグ可否をリセット（前回の設定を消す）
+    el.draggable = false;
+    el.ondragstart = null;
+    el.ondragend = null;
+
     if (mergedRes.length > 0) {
       el.classList.add('busy');
       const r = mergedRes[0]; // 最も早い時間の予約を主表示
+      // ★ Claude (2026-08-07): 埋まっている席は PC でドラッグ可能に。
+      //   単一予約はその予約、複数予約は主表示（最も早い時間）を移動対象。
+      el.draggable = true;
+      el.ondragstart = function(e) {
+        try {
+          e.dataTransfer.setData('text/reservation-id', r.id);
+          e.dataTransfer.effectAllowed = 'move';
+        } catch (_e) {}
+        el.classList.add('dragging');
+      };
+      el.ondragend = function() { el.classList.remove('dragging'); };
       const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
       const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
       // ★ Claude (2026-07-14): コース種別に応じて色分けクラスを付与（一覧タブと同じ配色）
