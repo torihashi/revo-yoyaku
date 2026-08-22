@@ -12677,6 +12677,12 @@ function assignSeatToReservation(resId, newSeat) {
   // 保存時にも Yahoo プレースホルダーを除去
   const cleanedTarget = cleanSeat(targetSeat);
   r.seat = cleanedTarget;
+  // ★ Claude (2026-08-07): 席変更中は同期保護フラグを立てる。
+  //   これで webhook 応答前に pullFromCalendar が走っても、mergeFromCalendar が
+  //   GCal の古い席情報でローカルを上書きしない（既存の _needsGcalUpdate 保護を再利用）。
+  //   従来: 33→3 に移動 → 応答前に sync → GCal タイトルに「33」が残っていて local が「33」に戻る
+  //         → 33 が空席と誤認 → 次の予約と衝突（ヒスイの二重ブッキング）
+  r._needsGcalUpdate = true;
   saveReservations();
   cancelMoveMode();
   renderSeatMap();
@@ -12694,13 +12700,25 @@ function assignSeatToReservation(resId, newSeat) {
       eventId: r.gcalEventId,
       newSeat: r.seat
     }).then(function(resp) {
-      if (resp.ok) {
+      if (resp && resp.ok) {
+        // 成功したら保護解除
+        delete r._needsGcalUpdate;
+        try { saveReservations(); } catch (e) {}
         updateSyncStatus('✓ 席変更同期OK', '#2e7d32');
       } else {
-        updateSyncStatus('⚠ 同期失敗', '#c62828');
+        // 失敗時は保護を維持 → 自動リトライ対象になる
+        updateSyncStatus('⚠ 席変更同期失敗（後で自動リトライ）', '#c62828');
       }
       setTimeout(function() { updateSyncStatus(''); }, 3000);
+    }).catch(function() {
+      // 通信エラーも保護維持
+      updateSyncStatus('⚠ 通信エラー（後で自動リトライ）', '#c62828');
+      setTimeout(function() { updateSyncStatus(''); }, 3000);
     });
+  } else if (!r.gcalEventId) {
+    // gcalEventId が無い（=まだ GCal に作成されていない）場合は保護不要
+    delete r._needsGcalUpdate;
+    try { saveReservations(); } catch (e) {}
   }
 }
 
