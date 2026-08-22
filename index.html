@@ -2343,6 +2343,19 @@ select.time-select option:disabled { color: #aaa; }
       Googleカレンダーに同期されていない（gcalEventIdを持たない）PWA作成の予約を検出します。<br>
       ネットワーク不調等で同期に失敗した予約や、誤入力された予約を手動で除去できます。
     </div>
+    <!-- ★ Claude (2026-08-07): 名前で予約を診断／強制削除（重複調査用） -->
+    <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--border);">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:6px;">🔎 名前で診断／強制削除（管理者のみ）</div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <input type="text" id="diagnoseNameInput" placeholder="例：イイヌマ" style="flex:1;padding:8px;font-size:12px;border:1px solid var(--border);border-radius:6px;font-family:inherit;" />
+        <button type="button" onclick="diagnoseByName(document.getElementById('diagnoseNameInput').value)" style="padding:8px 12px;font-size:12px;background:#e3f2fd;color:#0d47a1;border:1px solid #1976d2;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🔍 診断</button>
+        <button type="button" onclick="forceDeleteByName(document.getElementById('diagnoseNameInput').value)" style="padding:8px 12px;font-size:12px;background:#ffebee;color:#c62828;border:1px solid #c62828;border-radius:6px;cursor:pointer;font-family:inherit;font-weight:600;">🗑 強制削除</button>
+      </div>
+      <div style="font-size:10px;color:var(--muted);margin-top:4px;line-height:1.4;">
+        診断: 該当予約の内部状態（重複／幽霊 gcalEventId）を確認<br>
+        強制削除: 該当予約をローカル & GCal から完全削除
+      </div>
+    </div>
   </div>
 
   <!-- ★ Claude (2026-07-08): Discord 通知テスト送信（管理者のみ）
@@ -6490,6 +6503,76 @@ function _getLastSyncEls() {
     document.getElementById('lastSyncTime'),
     document.getElementById('lastSyncTimeSm')
   ].filter(Boolean);
+}
+
+// ★ Claude (2026-08-07): PWA 内診断ツール。管理者向け。
+//   予約検索（名前部分一致）→ 各件の状態を alert 表示。
+//   重複や幽霊 gcalEventId を目視で確認できる。
+//   使い方: ブラウザ URL バーに `javascript:diagnoseByName('イイヌマ')` （不便）
+//     または以下のショートカット: 一覧タブで日付ラベルを長押し（下記 UI 追加）
+function diagnoseByName(nameQuery) {
+  const q = String(nameQuery || '').trim();
+  if (!q) { alert('検索する名前の一部を入力してください'); return; }
+  const matches = reservations.filter(function(r) {
+    return (r && r.name && r.name.indexOf(q) >= 0);
+  });
+  if (matches.length === 0) {
+    alert('「' + q + '」を含む予約は見つかりませんでした（' + reservations.length + '件中）');
+    return;
+  }
+  const lines = matches.map(function(r, i) {
+    return '[' + (i+1) + '] ' + r.date + ' ' + r.time
+      + ' / ' + r.name + ' (' + (r.people || 0) + '名)'
+      + '\n  id=' + r.id
+      + ' / store=' + (r.store || 'torihashi')
+      + ' / source=' + (r.source || 'pwa')
+      + ' / status=' + r.status
+      + '\n  gcalId=' + (r.gcalEventId || '（無し）')
+      + (r._needsGcalResend ? ' [⏳未同期・新規再送待ち]' : '')
+      + (r._needsGcalUpdate ? ' [⏳未同期・編集再送待ち]' : '');
+  }).join('\n\n');
+  alert('診断結果（' + matches.length + '件）:\n\n' + lines);
+  console.log('[diagnoseByName]', matches);
+}
+
+// ★ Claude (2026-08-07): 名前で強制削除（重複掃除用）。
+//   選択した予約をローカル & GCal から完全削除。管理者向け。
+function forceDeleteByName(nameQuery) {
+  const q = String(nameQuery || '').trim();
+  if (!q) { alert('削除する名前の一部を入力してください'); return; }
+  const matches = reservations.filter(function(r) {
+    return (r && r.name && r.name.indexOf(q) >= 0);
+  });
+  if (matches.length === 0) { alert('該当なし'); return; }
+  const msg = '以下 ' + matches.length + ' 件を完全削除します:\n\n'
+    + matches.map(function(r, i) {
+        return (i+1) + '. ' + r.date + ' ' + r.time + ' / ' + r.name
+          + ' / ' + (r.store || '') + ' / gcalId=' + (r.gcalEventId || 'なし');
+      }).join('\n')
+    + '\n\nよろしいですか？（GCal 側も可能な範囲で削除）';
+  if (!confirm(msg)) return;
+  // GCal 側の削除リクエスト
+  matches.forEach(function(r) {
+    if (r.gcalEventId && isWebhookConfigured()) {
+      try {
+        callWebhook({
+          action: 'cancel',
+          store: r.store || 'torihashi',
+          eventId: r.gcalEventId,
+          cancelledBy: 'PWA',
+          cancelledByUser: '強制削除'
+        });
+      } catch (e) {}
+    }
+  });
+  // ローカルから完全削除
+  const toRemove = {};
+  matches.forEach(function(r) { toRemove[r.id] = true; });
+  reservations = reservations.filter(function(r) { return !toRemove[r.id]; });
+  try { saveReservations(); } catch (e) {}
+  try { renderReservationList(); } catch (e) {}
+  try { renderSeatMap(); } catch (e) {}
+  alert('✓ ' + matches.length + ' 件を削除しました。GCal 側の変更は同期後に反映されます。');
 }
 
 function pullFromCalendar(isManual) {
