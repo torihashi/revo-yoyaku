@@ -2273,6 +2273,15 @@ select.time-select option:disabled { color: #aaa; }
         <div id="laborContent">
           <div class="labor-empty">読み込み中...</div>
         </div>
+        <!-- ★ Claude (2026-08-07): アルバイト一括給料確定ボタン（管理者のみ） -->
+        <div style="margin-top:12px;padding:10px;background:#e8f5e9;border:1px solid #2e7d32;border-radius:8px;">
+          <div style="font-size:12px;color:#1b5e20;font-weight:700;margin-bottom:6px;">🧾 アルバイト一括給料確定</div>
+          <div style="font-size:10px;color:var(--muted);line-height:1.5;margin-bottom:8px;">
+            従業員マスタの区分が「アルバイト」の全員について、この月の給料明細を一括で確定してタイムカードv4「給料明細履歴」に転送します。<br>
+            転送前に確認画面が表示されます。手当類は 0 円として計算（必要なら個別確定で調整可）。
+          </div>
+          <button type="button" onclick="openBulkPaySlipConfirm()" style="width:100%;padding:10px;background:#2e7d32;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;">🧾 アルバイト全員の給料を確定してタイムカードv4へ転送</button>
+        </div>
 
         <!-- 個別シフト詳細（管理者のみ・時間詳細） -->
         <div class="staff-history-inner">
@@ -4524,6 +4533,199 @@ async function _fetchEmployeeMasterCached() {
     return data.items;
   }
   return null;
+}
+
+// ★ Claude (2026-08-07): アルバイト一括給料確定モーダル。
+//   従業員マスタで区分＝アルバイトの全員について、当月の給料明細を計算し、
+//   名前・出勤日数・支給合計だけを確認画面で表示。ボタン押下で個別 submitPaySlip を順次実行。
+async function openBulkPaySlipConfirm() {
+  if (!isWebhookConfigured()) {
+    alert('Webhook が設定されていません');
+    return;
+  }
+  if (!_laborState || !_laborState.year || !_laborState.month) {
+    alert('月間労働集計を先に開いてから実行してください');
+    return;
+  }
+  const year = _laborState.year;
+  const month = _laborState.month;
+  const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
+
+  // ローディングモーダル
+  const loading = document.createElement('div');
+  loading.className = 'modal-overlay';
+  loading.innerHTML = '<div class="modal" style="max-width:280px;text-align:center;"><div style="font-size:14px;">📥 データ取得中...</div></div>';
+  document.body.appendChild(loading);
+
+  try {
+    // 並列取得：従業員マスタ + 月間労働集計
+    const empUrl = WEBHOOK_URL + '?action=getEmployeeMaster&secret=' + encodeURIComponent(WEBHOOK_SECRET);
+    const laborUrl = WEBHOOK_URL + '?action=listMonthlyLabor'
+      + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
+      + '&store=' + encodeURIComponent(currentStore)
+      + '&year=' + year + '&month=' + month;
+
+    const [empResp, laborResp] = await Promise.all([
+      fetch(empUrl).then(function(r) { return r.json(); }),
+      fetch(laborUrl).then(function(r) { return r.json(); })
+    ]);
+    loading.remove();
+
+    if (!empResp || !empResp.ok) {
+      alert('従業員マスタの取得に失敗しました: ' + (empResp && empResp.error ? empResp.error : ''));
+      return;
+    }
+    if (!laborResp || !laborResp.ok) {
+      alert('月間労働集計の取得に失敗しました: ' + (laborResp && laborResp.error ? laborResp.error : ''));
+      return;
+    }
+
+    // 現店舗のアルバイトのみ抽出
+    const storeKey = currentStore === 'revolverd' ? 'リボ' : '鳥はし';
+    const parts = (empResp.items || []).filter(function(e) {
+      return String(e.section || '').indexOf('アルバイト') >= 0
+        && String(e.group || '').indexOf(storeKey) >= 0;
+    });
+    if (parts.length === 0) {
+      alert(storeKey + '店舗の「アルバイト」区分のスタッフが従業員マスタに見つかりません');
+      return;
+    }
+
+    // 労働集計を name でインデックス化
+    const laborByName = {};
+    (laborResp.items || []).forEach(function(l) {
+      laborByName[String(l.name || '').trim()] = l;
+    });
+
+    // 各人の支給合計を計算（手当はすべて 0）
+    const rows = parts.map(function(e) {
+      const labor = laborByName[e.name] || { workDays: 0, totalMinutes: 0, nightMinutes: 0 };
+      const totalHours = (labor.totalMinutes || 0) / 60;
+      const nightHours = (labor.nightMinutes || 0) / 60;
+      const hourlyRate = e.hourlyRate || 0;
+      const nightHourlyRate = e.nightHourlyRate || 0;
+      const basicPay = Math.round(totalHours * hourlyRate);
+      const nightPay = Math.round(nightHours * nightHourlyRate);
+      const totalGross = basicPay + nightPay; // 手当類は 0
+      return {
+        emp: e,
+        labor: labor,
+        totalHours: totalHours,
+        nightHours: nightHours,
+        hourlyRate: hourlyRate,
+        nightHourlyRate: nightHourlyRate,
+        basicPay: basicPay,
+        nightPay: nightPay,
+        totalGross: totalGross
+      };
+    });
+
+    // 確認モーダル
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const listHtml = rows.map(function(r, i) {
+      const hasWork = (r.labor.workDays || 0) > 0;
+      const rowStyle = hasWork
+        ? 'background:#fff;'
+        : 'background:#f5f5f5;color:var(--muted);';
+      return '<tr style="' + rowStyle + '">'
+        + '<td style="padding:6px 8px;font-size:12px;">'
+        +   '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">'
+        +     '<input type="checkbox" class="bulk-ps-check" data-idx="' + i + '"'
+        +       (hasWork ? ' checked' : '') + ' style="width:14px;height:14px;" />'
+        +     escHtml(r.emp.name)
+        +   '</label>'
+        + '</td>'
+        + '<td style="padding:6px 8px;font-size:12px;text-align:right;">' + (r.labor.workDays || 0) + '日</td>'
+        + '<td style="padding:6px 8px;font-size:12px;text-align:right;font-weight:600;">¥' + r.totalGross.toLocaleString() + '</td>'
+        + '</tr>';
+    }).join('');
+
+    overlay.innerHTML =
+      '<div class="modal" style="max-width:440px;max-height:85vh;overflow-y:auto;">'
+      + '<h3 style="margin-top:0;">🧾 アルバイト一括給料確定</h3>'
+      + '<div style="font-size:12px;color:var(--muted);margin-bottom:10px;">'
+      +   '対象月: <strong>' + yearMonthStr + '</strong> ／ 店舗: <strong>' + getStoreLabel() + '</strong><br>'
+      +   'チェックを外した人は転送されません。出勤 0 日の人は自動でOFF。'
+      + '</div>'
+      + '<table style="width:100%;border-collapse:collapse;margin-bottom:10px;">'
+      +   '<thead><tr style="background:#e8f5e9;">'
+      +     '<th style="padding:6px 8px;text-align:left;font-size:11px;">名前</th>'
+      +     '<th style="padding:6px 8px;text-align:right;font-size:11px;">出勤日数</th>'
+      +     '<th style="padding:6px 8px;text-align:right;font-size:11px;">支給合計</th>'
+      +   '</tr></thead>'
+      +   '<tbody>' + listHtml + '</tbody>'
+      + '</table>'
+      + '<div id="bulkPsProgress" style="font-size:12px;color:var(--muted);margin-bottom:8px;text-align:center;"></div>'
+      + '<div style="display:flex;gap:8px;">'
+      +   '<button class="secondary" id="bulkPsCancel" style="flex:1;">やめる</button>'
+      +   '<button class="primary" id="bulkPsGo" style="flex:2;">🚀 タイムカードv4へ転送</button>'
+      + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+    overlay.querySelector('#bulkPsCancel').onclick = function() { overlay.remove(); };
+    overlay.querySelector('#bulkPsGo').onclick = async function() {
+      const checked = Array.prototype.slice.call(overlay.querySelectorAll('.bulk-ps-check:checked'))
+        .map(function(el) { return parseInt(el.getAttribute('data-idx'), 10); });
+      if (checked.length === 0) { alert('対象が選択されていません'); return; }
+      if (!confirm(checked.length + ' 名分の給料を確定します。よろしいですか？')) return;
+
+      const progressEl = overlay.querySelector('#bulkPsProgress');
+      const goBtn = overlay.querySelector('#bulkPsGo');
+      const cancelBtn = overlay.querySelector('#bulkPsCancel');
+      goBtn.disabled = true; cancelBtn.disabled = true;
+      let ok = 0, ng = 0;
+      for (let ci = 0; ci < checked.length; ci++) {
+        const r = rows[checked[ci]];
+        progressEl.textContent = '転送中... (' + (ci + 1) + '/' + checked.length + ') ' + r.emp.name;
+        try {
+          const resp = await callWebhook({
+            action: 'submitPaySlip',
+            userEmail: (currentUser && currentUser.email) || '',
+            yearMonth: yearMonthStr,
+            employeeName: r.emp.name,
+            salaryType: r.emp.salaryType || '時給',
+            workDays: r.labor.workDays || 0,
+            totalWorkTime: fmtHmForBulk_(r.labor.totalMinutes || 0),
+            totalHours: r.totalHours.toFixed(2),
+            nightHours: r.nightHours.toFixed(2),
+            hourlyRate: r.hourlyRate,
+            nightHourlyRate: r.nightHourlyRate,
+            basicPay: r.basicPay,
+            nightPay: r.nightPay,
+            positionAllowance: 0,
+            overtimeAllowance: 0,
+            nightOvertimeAllowance: 0,
+            commuteTaxable: 0,
+            commuteNonTaxable: 0,
+            totalGross: r.totalGross,
+            incomeTax: 0,
+            residentialTax: 0,
+            employmentInsurance: 0,
+            totalDeduction: 0,
+            netPay: r.totalGross,
+            confirmedBy: (currentUser && currentUser.name) || 'bulk'
+          });
+          if (resp && resp.ok) { ok++; } else { ng++; console.warn('submitPaySlip failed for', r.emp.name, resp); }
+        } catch (e) { ng++; console.error('submitPaySlip exception for', r.emp.name, e); }
+      }
+      progressEl.textContent = '✓ 完了：成功 ' + ok + ' 件 / 失敗 ' + ng + ' 件';
+      try { logActivity('💰 給料一括確定', yearMonthStr + ' ' + getStoreLabel(), '成功' + ok + '件 / 失敗' + ng + '件'); } catch (e) {}
+      goBtn.textContent = '閉じる';
+      goBtn.disabled = false;
+      goBtn.onclick = function() { overlay.remove(); };
+      cancelBtn.style.display = 'none';
+    };
+  } catch (err) {
+    try { loading.remove(); } catch (e) {}
+    alert('エラー: ' + (err.message || err));
+  }
+}
+
+function fmtHmForBulk_(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h + ':' + String(m).padStart(2, '0');
 }
 
 async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, nightMin) {
