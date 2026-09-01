@@ -4585,7 +4585,10 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
   // ★ Claude (2026-07-14): マスタから手当4種を読込
   const positionAllowance = emp.positionAllowance || 0;
   const overtimeAllowance = emp.overtimeAllowance || 0;
-  const nightOvertimeDefault = emp.nightOvertimeAllowance || 0;
+  // ★ Claude (2026-08-07): 深夜残業手当のデフォルトを「深夜×深夜時給」の計算値に変更。
+  //   旧: 従業員マスタ H列 の値（深夜時給が入っていて、そのままだと1250円などの単価が入る）
+  //   新: 深夜手当（=nightPay）と同じ計算値をプリセット。編集は従来通り可能。
+  const nightOvertimeDefault = nightPay;
   const commuteTaxable = emp.commuteTaxable || 0;
   const commuteNonTaxable = emp.commuteNonTaxable || 0;
   const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
