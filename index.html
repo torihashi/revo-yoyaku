@@ -4582,15 +4582,13 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
     ? Math.round(hourlyRate)  // 月給は 金額(E列)をそのまま基本給とする
     : Math.round(totalHours * hourlyRate);
   const nightPay = Math.round(nightHours * nightHourlyRate);
-  // ★ Claude (2026-07-14): マスタから手当4種を読込
-  const positionAllowance = emp.positionAllowance || 0;
-  const overtimeAllowance = emp.overtimeAllowance || 0;
-  // ★ Claude (2026-08-07): 深夜残業手当のデフォルトを「深夜×深夜時給」の計算値に変更。
-  //   旧: 従業員マスタ H列 の値（深夜時給が入っていて、そのままだと1250円などの単価が入る）
-  //   新: 深夜手当（=nightPay）と同じ計算値をプリセット。編集は従来通り可能。
-  const nightOvertimeDefault = nightPay;
-  const commuteTaxable = emp.commuteTaxable || 0;
-  const commuteNonTaxable = emp.commuteNonTaxable || 0;
+  // ★ Claude (2026-08-07): 手当5項目のデフォルトを全て 0 円に統一。
+  //   従業員マスタの値ではなく、都度必要な分だけ管理者が手入力する運用に変更。
+  const positionAllowance = 0;
+  const overtimeAllowance = 0;
+  const nightOvertimeDefault = 0;
+  const commuteTaxable = 0;
+  const commuteNonTaxable = 0;
   const yearMonthStr = year + '年' + String(month).padStart(2, '0') + '月';
 
   // ★ Claude (2026-07-14): 月給/時給で表示ラベルを切替
