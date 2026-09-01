@@ -2273,17 +2273,18 @@ select.time-select option:disabled { color: #aaa; }
         <div id="laborContent">
           <div class="labor-empty">読み込み中...</div>
         </div>
-        <!-- ★ Claude (2026-08-07): アルバイト一括給料確定（インライン表示） -->
-        <div style="margin-top:12px;padding:10px;background:#e8f5e9;border:1px solid #2e7d32;border-radius:8px;">
+        <!-- ★ Claude (2026-08-07): アルバイト一括給料確定（管理者のみ・厳格化）
+             hidden クラス初期状態 → JS で currentUser.isAdmin の時だけ表示 -->
+        <div id="bulkPaySlipCard" class="hidden" style="margin-top:12px;padding:10px;background:#e8f5e9;border:1px solid #2e7d32;border-radius:8px;">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-            <div style="font-size:12px;color:#1b5e20;font-weight:700;">🧾 アルバイト一括給料確定</div>
+            <div style="font-size:12px;color:#1b5e20;font-weight:700;">🧾 アルバイト一括給料確定 <span style="font-size:10px;font-weight:400;color:var(--muted);">（管理者のみ）</span></div>
             <button type="button" onclick="loadBulkPaySlipList()" title="再読込" style="font-size:11px;padding:3px 8px;background:#fff;color:#1b5e20;border:1px solid #2e7d32;border-radius:4px;cursor:pointer;font-family:inherit;">🔄 更新</button>
           </div>
           <div style="font-size:10px;color:var(--muted);line-height:1.4;margin-bottom:8px;">
             従業員マスタの区分が「アルバイト」の当店舗スタッフ。手当類は 0 円で計算（要調整は個別確定で）。出勤0日は自動OFF。
           </div>
           <div id="bulkPaySlipList">
-            <div style="font-size:11px;color:var(--muted);text-align:center;padding:8px;">読み込み中...</div>
+            <div style="font-size:11px;color:var(--muted);text-align:center;padding:8px;">「🔄 更新」で一覧を取得</div>
           </div>
           <div id="bulkPaySlipProgress" style="font-size:12px;color:var(--muted);margin-top:6px;text-align:center;"></div>
           <button type="button" id="bulkPaySlipSubmit" onclick="submitBulkPaySlips()" style="width:100%;margin-top:8px;padding:10px;background:#2e7d32;color:#fff;border:none;border-radius:6px;font-weight:700;font-size:13px;cursor:pointer;font-family:inherit;">🚀 チェックした人の給料を確定してタイムカードv4へ転送</button>
@@ -2406,9 +2407,10 @@ select.time-select option:disabled { color: #aaa; }
   </div>
 
   <!-- アクティビティログ（席情報タブの末尾・全員閲覧可） -->
-  <div class="card" id="activityLogCard">
+  <!-- ★ Claude (2026-08-07): アクティビティログは機密（過去に給料額を記録していた歴あり）→ 管理者のみ表示 -->
+  <div class="card hidden" id="activityLogCard">
     <h2 style="display:flex;align-items:center;gap:8px;justify-content:space-between;">
-      <span>📜 アクティビティログ（直近4日）</span>
+      <span>📜 アクティビティログ（直近4日） <span style="font-size:11px;font-weight:400;color:var(--muted);">（管理者のみ）</span></span>
       <button id="logRefreshBtn" type="button" style="font-size:11px;padding:5px 10px;border:1px solid var(--border);background:var(--card);border-radius:6px;cursor:pointer;font-family:inherit;">🔄 更新</button>
     </h2>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
@@ -4704,7 +4706,8 @@ async function submitBulkPaySlips() {
     } catch (e) { ng++; console.error('submitPaySlip exception for', r.emp.name, e); }
   }
   if (progressEl) progressEl.textContent = '✓ 完了：成功 ' + ok + ' 件 / 失敗 ' + ng + ' 件';
-  try { logActivity('💰 給料一括確定', _bulkPaySlipYearMonthStr + ' ' + getStoreLabel(), '成功' + ok + '件 / 失敗' + ng + '件'); } catch (e) {}
+  // ★ Claude (2026-08-07): 一括給料もアクティビティログには金額・氏名を残さない
+  try { logActivity('💰 給料一括確定', _bulkPaySlipYearMonthStr, ok + '/' + (ok+ng) + '件'); } catch (e) {}
   if (submitBtn) submitBtn.disabled = false;
 }
 
@@ -4873,7 +4876,8 @@ async function _oldOpenBulkPaySlipConfirmBody() {
         } catch (e) { ng++; console.error('submitPaySlip exception for', r.emp.name, e); }
       }
       progressEl.textContent = '✓ 完了：成功 ' + ok + ' 件 / 失敗 ' + ng + ' 件';
-      try { logActivity('💰 給料一括確定', yearMonthStr + ' ' + getStoreLabel(), '成功' + ok + '件 / 失敗' + ng + '件'); } catch (e) {}
+      // ★ Claude (2026-08-07): 旧モーダル方式のログ。金額・氏名を残さない
+      try { logActivity('💰 給料一括確定', yearMonthStr, ok + '/' + (ok+ng) + '件'); } catch (e) {}
       goBtn.textContent = '閉じる';
       goBtn.disabled = false;
       goBtn.onclick = function() { overlay.remove(); };
@@ -5100,7 +5104,9 @@ async function renderPaySlipConfirm(staffName, year, month, workDays, totalMin, 
         resultEl.style.color = '#2e7d32';
         resultEl.textContent = '✓ 「給料明細履歴」シートに追記しました';
         btn.textContent = '✓ 確定完了';
-        try { logActivity('💰 給料確定', staffName + ' ' + yearMonthStr, '支給:¥' + totalGross.toLocaleString() + (isSpecialAlbait ? ' / 手取:¥' + netPay.toLocaleString() : '')); } catch (e) {}
+        // ★ Claude (2026-08-07): 個人給料は機密なのでアクティビティログには金額を残さない。
+        //   （旧: 支給額・手取り額を書いていた → アクティビティログ経由で漏洩の可能性）
+        try { logActivity('💰 給料確定', yearMonthStr + ' 個別確定', ''); } catch (e) {}
       } else {
         resultEl.style.color = '#c62828';
         resultEl.textContent = '⚠ 失敗: ' + ((resp && resp.error) || '不明');
@@ -5150,6 +5156,14 @@ function showLaborUnlocked() {
     _laborState.month = d.getMonth() + 1;
   }
   renderLaborMonth();
+  // ★ Claude (2026-08-07): 一括給料確定カードは管理者だけに表示
+  try {
+    const bulkCard = document.getElementById('bulkPaySlipCard');
+    if (bulkCard) {
+      const isAdmin = !!(currentUser && currentUser.isAdmin);
+      bulkCard.classList.toggle('hidden', !isAdmin);
+    }
+  } catch (e) {}
 }
 function changeLaborMonth(delta) {
   _laborState.month += delta;
@@ -8005,6 +8019,9 @@ function switchTab(name) {
       // ★ Claude (2026-07-08): Discord通知テストカードも管理者のみ表示
       const dc = document.getElementById('discordTestCard');
       if (dc) dc.classList.toggle('hidden', !isAdmin);
+      // ★ Claude (2026-08-07): アクティビティログは機密（給料額を含む可能性）→ 管理者のみ表示
+      const alc = document.getElementById('activityLogCard');
+      if (alc) alc.classList.toggle('hidden', !isAdmin);
       // ★ Claude (2026-07-14): ストレージ使用状況を描画
       try { renderStorageMonitor(); } catch (e) {}
       // 商品マスタの最終取得時刻を表示
