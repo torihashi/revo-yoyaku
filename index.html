@@ -6819,7 +6819,6 @@ function mergeFromCalendar(items, syncedStores) {
     items.forEach(function(ev) { if (ev && ev.id) gcalIdSet[ev.id] = true; });
     const stores = syncedStores || { torihashi: true, revolverd: true }; // 後方互換
     const GRACE_MS = 60 * 1000; // 作成直後の誤削除防止
-    let resendMarked = 0;
     const keep = [];
     reservations.forEach(function(r) {
       if (!r) return;
@@ -6834,27 +6833,17 @@ function mergeFromCalendar(items, syncedStores) {
           && !r._needsGcalResend
           && !r._needsGcalUpdate
           && !isRecent) {
-        // ★ Claude (2026-08-07): PWA直接入力の予約は「幽霊 gcalEventId」の可能性が高いので、
-        //   削除ではなく再送信対象にマーク（→ auto-retry が GCal に再作成する）。
-        //   取込系（yahoo/autoreserve/gnavi）は GCal を真実として扱うので削除でOK。
-        if (r.source === 'pwa' || !r.source) {
-          delete r.gcalEventId;
-          r._needsGcalResend = true;
-          resendMarked++;
-          keep.push(r);
-          return;
-        }
+        // ★ Claude (2026-08-07 修正): PWA予約も同様に削除する。
+        //   以前は「再送信対象にマーク」→ 自動リトライで GCal に再作成してしまい、
+        //   ユーザーが GCal で削除しても PWA から消えず、無限復活する不具合の原因になっていた。
+        //   GCal を真実として扱う：消えていたら PWA からも消える。
         purged++;
-        return; // 削除
+        return;
       }
       keep.push(r);
     });
-    if (purged > 0 || resendMarked > 0) {
+    if (purged > 0) {
       reservations = keep;
-    }
-    if (resendMarked > 0) {
-      // 少し遅らせて自動リトライを発火
-      setTimeout(function() { try { _autoRetryGhostReservations(); } catch (e) {} }, 800);
     }
   } catch (e) { console.warn('purge step failed:', e); }
 
