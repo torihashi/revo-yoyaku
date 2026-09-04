@@ -6934,10 +6934,10 @@ function forceDeleteByName(nameQuery) {
       } catch (e) {}
     }
   });
-  // ローカルから完全削除
-  const toRemove = {};
-  matches.forEach(function(r) { toRemove[r.id] = true; });
-  reservations = reservations.filter(function(r) { return !toRemove[r.id]; });
+  // ★ Claude (2026-08-07): ID衝突対策 → 「同じIDの別予約」を巻き添え削除しないよう、
+  //   オブジェクト参照（===）で削除対象を判定する。
+  const toRemoveSet = new Set(matches);
+  reservations = reservations.filter(function(r) { return !toRemoveSet.has(r); });
   try { saveReservations(); } catch (e) {}
   try { renderReservationList(); } catch (e) {}
   try { renderSeatMap(); } catch (e) {}
@@ -7645,8 +7645,19 @@ function genId(seq) {
   const yy = String(d.getFullYear()).slice(2);
   const mm = String(d.getMonth()+1).padStart(2,'0');
   const dd = String(d.getDate()).padStart(2,'0');
-  const n = String(seq != null ? seq : reservations.length + 1).padStart(4,'0');
-  return `${yy}${mm}${dd}-${n}`;
+  // ★ Claude (2026-08-07): 端末間ID衝突防止のため、時刻(HHMMSS)＋ランダム3桁を組合わせる。
+  //   旧: reservations.length+1 で NNNN → 端末A(件数100)・端末B(件数100) が同秒帯に作成すると
+  //       同じIDが2つの予約に付与 → find(x=>x.id===resId) が別人を返す不具合の原因。
+  //   新: HHMMSS + 3桁ランダム → 実質衝突しない（1秒に1000件以上作らない限り）。
+  if (seq != null) {
+    // 明示的な seq 指定は従来通り
+    return `${yy}${mm}${dd}-${String(seq).padStart(4,'0')}`;
+  }
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mi = String(d.getMinutes()).padStart(2,'0');
+  const ss = String(d.getSeconds()).padStart(2,'0');
+  const rnd = String(Math.floor(Math.random() * 1000)).padStart(3, '0');
+  return `${yy}${mm}${dd}-${hh}${mi}${ss}${rnd}`;
 }
 
 // 後方互換: 既存呼び出し用
