@@ -435,6 +435,12 @@ button.secondary:active { background: var(--primary); color: white; }
   color: #ad1457;
   border-color: #d81b60;
 }
+/* ★ 料理系（料理のみ／料理あり）は黄色で席のみと区別 */
+.reservation-item .course-badge.meal {
+  background: #fff59d;
+  color: #f57f17;
+  border-color: #fbc02d;
+}
 .reservation-item .status {
   font-size: 11px; padding: 3px 8px; border-radius: 8px;
   font-weight: 600; white-space: nowrap;
@@ -12115,7 +12121,9 @@ function renderReservationList() {
       const noteLabel = noteBadgeDisplayLabel(r.notes);
       const seatOnlyCourse = isSeatOnlyCourse(course);
       if (noteLabel && seatOnlyCourse) {
-        miniCourseHtml = '<span class="ri-course-mini seat-only">' + noteLabel + '</span>';
+        // ★ 旧データ（席のみ＋【料理あり】）は料理色（黄）で表示し、席のみ（緑）と区別
+        const _nlCls = noteLabel === '料理あり' ? 'meal' : 'seat-only';
+        miniCourseHtml = '<span class="ri-course-mini ' + _nlCls + '">' + (noteLabel === '料理あり' ? '🍱 ' : '') + noteLabel + '</span>';
       } else if (course && !seatOnlyCourse) {
         const tp = course.type;
         const isPremium = tp.indexOf('プレミアム') >= 0 || course.id === 'E';
