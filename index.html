@@ -1938,7 +1938,8 @@ select.time-select option:disabled { color: #aaa; }
     <div class="note-badge-row" id="noteBadgeRow">
       <button type="button" class="note-badge-btn" data-note-badge="料理あり">料理あり</button>
       <button type="button" class="note-badge-btn" data-note-badge="二次会">二次会</button>
-      <button type="button" class="note-badge-btn" data-note-badge="後日">後日</button>
+      <button type="button" class="note-badge-btn" data-note-badge="詳細後日">詳細後日</button>
+      <button type="button" class="note-badge-btn" data-note-badge="カOK">カOK</button>
     </div>
     <textarea id="notes" rows="2" placeholder="アレルギー・お祝い・ベビーカー等"></textarea>
   </div>
@@ -9195,7 +9196,7 @@ function getSelectedNoteBadges() {
 
 function stripNoteBadgeText(rawNotes) {
   return String(rawNotes || '')
-    .replace(/【(?:料理あり|二次会|後日)】\s*/g, '')
+    .replace(/【(?:料理あり|二次会|詳細後日|後日|カOK)】\s*/g, '')
     .trim();
 }
 
@@ -10085,7 +10086,7 @@ function openEditModal(resId) {
 
   const otherStore = (resStore === 'revolverd') ? 'torihashi' : 'revolverd';
   const otherLabel = (otherStore === 'revolverd') ? '🥃 リボ' : '🐔 鳥はし';
-  const editNoteLabels = ['料理あり', '二次会', '後日'];
+  const editNoteLabels = ['料理あり', '二次会', '詳細後日', 'カOK'];
   const editNoteText = stripNoteBadgeText(r.notes || '');
   overlay.innerHTML =
     '<div class="modal" style="max-width:440px;">'
@@ -10114,7 +10115,9 @@ function openEditModal(resId) {
     + '<div class="field"><label>特記</label>'
     +   '<div class="note-badge-row" id="editNoteBadgeRow">'
     +     editNoteLabels.map(function(label) {
-            const selected = String(r.notes || '').indexOf(label) >= 0 ? ' selected' : '';
+            // 旧「後日」バッジの既存予約は「詳細後日」を選択状態に
+            const _n = String(r.notes || '');
+            const selected = (_n.indexOf(label) >= 0 || (label === '詳細後日' && _n.indexOf('【後日】') >= 0)) ? ' selected' : '';
             return '<button type="button" class="note-badge-btn edit-note-badge-btn' + selected + '" data-edit-note-badge="' + label + '">' + label + '</button>';
           }).join('')
     +   '</div>'
@@ -11717,7 +11720,9 @@ function noteBadgeDisplayLabel(notes) {
   const text = String(notes || '');
   if (text.indexOf('二次会') >= 0) return '二次会';
   if (text.indexOf('料理あり') >= 0) return '料理あり';
-  if (text.indexOf('後日') >= 0) return '後日';
+  // ★ 旧「後日」は「詳細後日」に改名（既存データの「後日」も詳細後日として表示）
+  if (text.indexOf('後日') >= 0) return '詳細後日';
+  if (text.indexOf('カOK') >= 0) return 'カOK';
   return '';
 }
 
