@@ -6187,11 +6187,12 @@ function inferCourseFromCalendar(title, description, store) {
       if (/飲み放題|飲放題|飲み放|呑み放題/.test(nval) || isDrinkFromType) return 'R1';
     } else {
       if (/^席(だけ|のみ)/.test(nval) || nval.indexOf('席だけ') >= 0 || nval.indexOf('席のみ') >= 0) return 'S';
-      if (nval.indexOf('7700') >= 0) return 'E';
-      if (nval.indexOf('6600') >= 0) return 'D';
-      if (nval.indexOf('5500') >= 0) return 'C';
-      if (nval.indexOf('3300') >= 0) return 'B';
-      if (nval.indexOf('2200') >= 0) return 'A';
+      // ★ 新旧どちらの価格でも同じコースIDに（2026/10値上げ：2500/3500/6000/7000/8000）
+      if (nval.indexOf('8000') >= 0 || nval.indexOf('7700') >= 0) return 'E';
+      if (nval.indexOf('7000') >= 0 || nval.indexOf('6600') >= 0) return 'D';
+      if (nval.indexOf('6000') >= 0 || nval.indexOf('5500') >= 0) return 'C';
+      if (nval.indexOf('3500') >= 0 || nval.indexOf('3300') >= 0) return 'B';
+      if (nval.indexOf('2500') >= 0 || nval.indexOf('2200') >= 0) return 'A';
       // ★ Claude (2026-08-07): 価格が拾えなくても「飲み放題」文言があれば C（5500円）想定
       if (/飲み放題|飲放題|飲み放|呑み放題/.test(nval) || isDrinkFromType) return 'C';
       if (isMealFromType) return 'A';
@@ -6226,6 +6227,12 @@ function inferCourseFromCalendar(title, description, store) {
     return null; // 不明はnull（既存値維持）
   } else {
     // 鳥はし：価格を優先。5,500 のようなカンマ表記や全角数字も normalize 済み。
+    // ★ 2026/10 新価格（電話番号等との誤一致を避けるため「円」付きのみ判定）
+    if (text.indexOf('8000円') >= 0) return 'E';
+    if (text.indexOf('7000円') >= 0) return 'D';
+    if (text.indexOf('6000円') >= 0) return 'C';
+    if (text.indexOf('3500円') >= 0) return 'B';
+    if (text.indexOf('2500円') >= 0) return 'A';
     if (text.indexOf('7700円') >= 0 || text.indexOf('7700') >= 0) return 'E';
     if (text.indexOf('6600円') >= 0 || text.indexOf('6600') >= 0) return 'D';
     if (text.indexOf('5500円') >= 0 || text.indexOf('5500') >= 0) return 'C';
@@ -7298,8 +7305,46 @@ function _lookupCombinationCapacity(tablesStr) {
   if (!ov) return null;
   return (ov.max != null) ? ov.max : null;
 }
+// ============================================================
+// ★ 2026年10月 コース値上げ
+//   ・来店日が 2026-10-01 以降 かつ 予約受付日が値上げ告知日(2026-09-28)以降 → 新価格
+//   ・それ以前に受け付けた予約は、来店日が10月以降でも旧価格のまま（今までの金額は直さない）
+//   ・コースID（A〜E）は変えず、表示名・価格だけ切替える
+// ============================================================
+const PRICE_V2_START_DATE = '2026-10-01';                                   // 新価格が適用される来店日
+const PRICE_V2_BOOKED_FROM = new Date('2026-09-28T00:00:00+09:00').getTime(); // この日時以降に受けた予約が対象
+const COURSE_PRICE_V2 = {
+  A: { price: 2500, name: '料理のみ 2,500円', shortName: '料理2500' },
+  B: { price: 3500, name: '料理のみ 3,500円', shortName: '料理3500' },
+  C: { price: 6000, name: '飲み放題 6,000円', shortName: '飲放6000' },
+  D: { price: 7000, name: '飲み放題 7,000円', shortName: '飲放7000' },
+  E: { price: 8000, name: '飲み放題 8,000円', shortName: '飲放8000' }
+};
+function usesNewCoursePrice(r) {
+  if (!r) return false;
+  if (r.priceVersion) return r.priceVersion === 'v2';
+  if (!r.date || r.date < PRICE_V2_START_DATE) return false;
+  const created = r.createdAt ? Number(r.createdAt) : Date.now();
+  return created >= PRICE_V2_BOOKED_FROM;
+}
+// 予約 r に対して有効なコース情報（価格・名称）を返す
+function resolveCourse(courseId, r) {
+  const base = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === courseId; });
+  if (!base) return base;
+  const v2 = COURSE_PRICE_V2[base.id];
+  if (!v2 || !usesNewCoursePrice(r)) return base;
+  return Object.assign({}, base, v2);
+}
+// コース一覧を予約 r の条件（来店日・受付日）で価格反映して返す
+function resolveCourseList(list, r) {
+  return list.map(function(c) { return resolveCourse(c.id, r) || c; });
+}
+
 function getCourses() {
-  return currentStore === 'revolverd' ? REVO_COURSES : COURSES;
+  // 新規予約フロー用：選択中の来店日＋今受付 で価格を決定
+  const list = currentStore === 'revolverd' ? REVO_COURSES : COURSES;
+  const d = (typeof state !== 'undefined' && state && state.date) || todayStr();
+  return resolveCourseList(list, { date: d, createdAt: Date.now() });
 }
 function getSeatPresets() {
   return currentStore === 'revolverd' ? REVO_SEAT_PRESETS : SEAT_PRESETS;
@@ -8676,7 +8721,7 @@ async function _resendReservationUpdate(r) {
       return !!(resp && resp.ok);
     }
     // 通常予約
-    const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    const course = resolveCourse(r.course, r);
     const title = buildEventTitle(r);
     const startDate = new Date(r.date + 'T' + r.time + ':00');
     const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
@@ -8769,7 +8814,7 @@ async function _resendReservationToGcal(r) {
       return false;
     }
     // 通常予約
-    const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    const course = resolveCourse(r.course, r);
     let courseText = '';
     if (course) {
       const isSeatOnly = (course.id === 'S' || course.id === 'RS');
@@ -9445,7 +9490,7 @@ function submitReservation() {
   // Webhook（Phase 3）: 予約カレンダーへ書込
   if (isWebhookConfigured()) {
     updateSyncStatus('同期中...', '#ef6c00');
-    const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === data.course; });
+    const course = resolveCourse(data.course, data);
     // コース表記：席のみ系は空、有料コースは「価格円[飲み放題]、」、リボ系（価格0）はコース名、
     let courseText = '';
     if (course) {
@@ -10088,7 +10133,8 @@ function openEditModal(resId) {
   }
   // コース選択：予約の店舗 (r.store) に応じて取得
   const resStore = r.store || 'torihashi';
-  const courseList = resStore === 'revolverd' ? REVO_COURSES : COURSES;
+  // ★ 値上げ対応：この予約の条件（来店日・受付日）で価格・名称を反映
+  const courseList = resolveCourseList(resStore === 'revolverd' ? REVO_COURSES : COURSES, r);
   // ★ 旧データ: 席のみ＋【料理あり】バッジ → 編集時は「料理あり」コースを選択状態に
   const _legacyMeal = (r.course === 'S' || r.course === 'RS') && String(r.notes || '').indexOf('料理あり') >= 0;
   const _effectiveCourse = _legacyMeal ? (resStore === 'revolverd' ? 'RSM' : 'SM') : r.course;
@@ -10196,7 +10242,7 @@ function openEditModal(resId) {
       const startDate = new Date(r.date + 'T' + r.time + ':00');
       const endDate   = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
       // 両店舗のコースをマージして検索
-      const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+      const course = resolveCourse(r.course, r);
       const newTitle = buildEventTitle(r);
       // ★ Claude (2026-06-22): 人数履歴行を description に含めて端末間共有
       const peopleHistoryLineEdit = (Array.isArray(r.peopleHistory) && r.peopleHistory.length > 1)
@@ -10282,7 +10328,9 @@ function transferReservationToStore(resId, targetStore, mode) {
     course: defaultCourse,
     source: 'pwa',
     gcalEventId: undefined,
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    // ★ 値上げ対応：店舗移動/コピーでも元予約の価格区分を引き継ぐ
+    priceVersion: usesNewCoursePrice(orig) ? 'v2' : 'v1'
   });
 
   if (mode === 'move') {
@@ -10318,7 +10366,7 @@ function transferReservationToStore(resId, targetStore, mode) {
     const startDate = new Date(newRes.date + 'T' + newRes.time + ':00');
     const endDate   = new Date(startDate.getTime() + 2 * 60 * 60 * 1000);
     const newTitle  = buildEventTitle(newRes);
-    const course    = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === newRes.course; });
+    const course    = resolveCourse(newRes.course, newRes);
     // ★ Claude (2026-06-22): 人数履歴行を description に含めて端末間共有
     const peopleHistoryLineMove = (Array.isArray(newRes.peopleHistory) && newRes.peopleHistory.length > 1)
       ? '人数履歴: ' + newRes.peopleHistory.join('→')
@@ -10679,7 +10727,7 @@ function buildEventTitle(r) {
               : r.source === 'autoreserve' ? '◾️ '
               : r.source === 'gnavi' ? '🟢 '
               : '';
-  const c = COURSES.concat(REVO_COURSES).find(function(x) { return x.id === r.course; });
+  const c = resolveCourse(r.course, r);
   let courseText = '';
   if (c) {
     const isSeatOnly = (c.id === 'S' || c.id === 'RS');
@@ -11772,7 +11820,7 @@ function isSeatOnlyCourse(course) {
 function reservationDisplayCourseLabel(r) {
   const noteLabel = noteBadgeDisplayLabel(r && r.notes);
   if (noteLabel) return noteLabel;
-  const course = COURSES.concat(REVO_COURSES).find(function(c) { return r && c.id === r.course; });
+  const course = r ? resolveCourse(r.course, r) : null;
   if (isSeatOnlyCourse(course)) return '';
   return course.shortName || course.name || course.type || '';
 }
@@ -11962,7 +12010,7 @@ function renderReservationList() {
     list.innerHTML = '<div class="empty-state">この日の' + getStoreLabel() + 'の予約はありません</div>';
   } else {
     list.innerHTML = dayRes.map(function(r) {
-      const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+      const course = resolveCourse(r.course, r);
       const sourceMark = r.source === 'yahoo'       ? '⚫'
                        : r.source === 'autoreserve' ? '◾️'
                        : r.source === 'gnavi'       ? '🟢'
@@ -12353,7 +12401,7 @@ function _renderSeatMapImpl() {
         el.classList.add('dragging');
       };
       el.ondragend = function() { el.classList.remove('dragging'); };
-      const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+      const courseObj = resolveCourse(r.course, r);
       let courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
       // 旧データ（席のみ＋【料理あり】特記）も座席表で「料理あり」と表示
       if (!courseShort && String(r.notes || '').indexOf('料理あり') >= 0) courseShort = '料理あり';
@@ -12710,7 +12758,7 @@ function showSeatReservationPicker(seatId, list) {
   box.appendChild(hint);
 
   list.forEach(function(r) {
-    const courseObj = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+    const courseObj = resolveCourse(r.course, r);
     const courseShort = courseObj && courseObj.shortName ? courseObj.shortName : '';
     const btn = document.createElement('button');
     btn.style.cssText = 'display:block;width:100%;text-align:left;padding:10px 12px;margin-bottom:8px;border:1px solid #ddd;border-radius:8px;background:#fafafa;cursor:pointer;font-size:14px;';
@@ -12893,7 +12941,7 @@ function renderCalendarGrid(container, animDirection) {
         if (r.type === 'takeout') {
           txt = '🥡 ' + nm;
         } else {
-          const course = COURSES.concat(REVO_COURSES).find(function(c) { return c.id === r.course; });
+          const course = resolveCourse(r.course, r);
           const isSeatOnly = isSeatOnlyCourse(course);
           if (isSeatOnly) chipCls += ' seat-only';
           else if (course) {
