@@ -10802,7 +10802,7 @@ async function loadTakeoutProducts(opts) {
     const url = WEBHOOK_URL
               + '?action=getProducts'
               + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
-              + (force ? '&_t=' + Date.now() : ''); // force時はクエリでキャッシュバスト
+              + (force ? '&nocache=1&_t=' + Date.now() : ''); // force時は GAS側キャッシュも無視
     const r = await fetch(url);
     const data = await r.json();
     if (data && data.ok && Array.isArray(data.products) && data.products.length > 0) {
