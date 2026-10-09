@@ -573,9 +573,9 @@ button.secondary:active { background: var(--primary); color: white; }
   font-size: 13px;
   grid-template-areas:
     "l6 l6 l5 l5 r32 r32 r32 r32"
-    "l4 l4 l3 l3 r31 r31 r33 r33"
-    "l2 l2 l1 l1 ir  ir  r34 r34"
-    "s9 s9 s9 s10 s10 s10 ir-x ir-x"
+    "l4 l4 l3 l3 r31 r31 r312 r312"
+    "l2 l2 l1 l1 r33 r33 r34 r34"
+    "s9 s9 s9 s10 s10 s10 ir ir"
     "b18 b17 b16 b15 b14 b13 b12 b11";
 }
 .seat-layout .seat {
@@ -665,6 +665,7 @@ button.secondary:active { background: var(--primary); color: white; }
 .seat-layout .seat.r32 { grid-area: r32; } .seat-layout .seat.r31 { grid-area: r31; }
 .seat-layout .seat.r33 { grid-area: r33; } .seat-layout .seat.r34 { grid-area: r34; }
 .seat-layout .seat.ir { grid-area: ir; }
+.seat-layout .seat.r312 { grid-area: r312; } /* ★ 31-2 席（旧33の位置） */
 .seat-layout .seat.s9 { grid-area: s9; } .seat-layout .seat.s10 { grid-area: s10; }
 .seat-layout .seat.b11 { grid-area: b11; } .seat-layout .seat.b12 { grid-area: b12; }
 .seat-layout .seat.b13 { grid-area: b13; } .seat-layout .seat.b14 { grid-area: b14; }
@@ -2144,6 +2145,7 @@ select.time-select option:disabled { color: #aaa; }
       <div class="seat l1" data-seat="1">1</div>
       <div class="seat r32" data-seat="32">32</div>
       <div class="seat r31" data-seat="31">31</div>
+      <div class="seat r312" data-seat="31-2">31-2</div>
       <div class="seat r33" data-seat="33">33</div>
       <div class="seat r34" data-seat="34">34</div>
       <div class="seat ir" data-seat="いろり">いろり</div>
@@ -2464,6 +2466,8 @@ const SEAT_MASTER = [
   { id:'10', area:'小上がり', type:'座卓', min:2, base:3, max:4, joinable:['9'], note:'2〜4名' },
   { id:'11-18', area:'カウンター', type:'カウンター席', min:1, base:8, max:8, joinable:[], note:'8席。1〜3名向け' },
   { id:'31', area:'増築エリア', type:'テーブル', min:2, base:6, max:10, joinable:[], note:'2〜10名' },
+  // ★ 新設 31-2（人数は仮設定。席情報タブの ✏️ 編集で変更可）
+  { id:'31-2', area:'増築エリア', type:'テーブル', min:1, base:4, max:4, joinable:[], note:'1〜4名（仮）' },
   { id:'32', area:'増築エリア', type:'掘りごたつ', min:4, base:8, max:11, joinable:[], note:'4〜11名' },
   { id:'33', area:'増築エリア', type:'掘りごたつ', min:1, base:4, max:4, joinable:['34'], note:'33+34で6〜10名' },
   { id:'34', area:'増築エリア', type:'掘りごたつ', min:1, base:4, max:4, joinable:['33'], note:'33+34で6〜10名' },
@@ -2482,6 +2486,7 @@ const COMBINATIONS = [
   { id:'P-09', area:'小上がり', tables:'9+10', min:6, max:10, note:'結合' },
   { id:'P-10', area:'カウンター', tables:'11〜18', min:1, max:8, note:'1〜3名向け' },
   { id:'P-11', area:'増築エリア', tables:'31', min:2, max:10, note:'個室テーブル' },
+  { id:'P-18', area:'増築エリア', tables:'31-2', min:1, max:4, note:'新設テーブル（人数仮）' },
   { id:'P-12', area:'増築エリア', tables:'32', min:4, max:12, note:'大テーブル（詰めて12名）' },
   { id:'P-13', area:'増築エリア', tables:'31+32', min:8, max:18, note:'31+32結合' },
   { id:'P-14', area:'増築エリア', tables:'いろり+33+34', min:11, max:20, note:'いろり卓3結合' },
@@ -9625,7 +9630,7 @@ const SEAT_PRESETS = [
   '9', '10', '9+10',
   '11', '12', '13', '14', '15', '16', '17', '18',
   '11-13', '14-16', '11-18',
-  '31', '32', '33', '34', '33+34', 'いろり',
+  '31', '31-2', '32', '33', '34', '33+34', 'いろり',
   '増築貸切',
   'カウンター', '当日決定'
 ];
@@ -9719,7 +9724,7 @@ function expandSeat(seat) {
   if (!seat) return [];
   // Yahoo席名はマッピング表から
   if (YAHOO_SEAT_MAP[seat]) return YAHOO_SEAT_MAP[seat].tables.slice();
-  if (seat === '増築貸切') return ['いろり', '31', '32', '33', '34'];
+  if (seat === '増築貸切') return ['いろり', '31', '31-2', '32', '33', '34'];
   // リボルバード特殊プリセット
   if (seat === '1F貸切') return ['R11','R12','R13','R14','R15','R16','R17','R18','R1','R2','R3','R4','R5','R6'];
   if (seat === '2F貸切') return ['R21','R22','R23','R24'];
@@ -9729,6 +9734,10 @@ function expandSeat(seat) {
   }
   if (seat.indexOf('-') >= 0) {
     const parts = seat.split('-').map(function(s) { return parseInt(s.trim()); });
+    // ★ 「31-2」のような枝番付き席名（後ろの数字が小さい）は範囲ではなく単独席として扱う
+    if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1]) && parts[1] < parts[0]) {
+      return [seat];
+    }
     if (parts.length === 2 && !isNaN(parts[0]) && !isNaN(parts[1])) {
       const result = [];
       for (let i = parts[0]; i <= parts[1]; i++) result.push(String(i));
