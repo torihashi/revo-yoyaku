@@ -6575,8 +6575,11 @@ function mergeFromCalendar(items, syncedStores) {
       const descResId = parseReservationIdFromDescription(ev.description || '');
       if (descResId) {
         const match = reservations.find(function(r) {
-          // 同じ予約IDで、まだ gcalEventId が紐付いていない（またはこの ev とは別ID）レコードを探す
-          return r.id === descResId && r.gcalEventId !== ev.id;
+          // ★ 修正: 「まだ gcalEventId が無い」かつ「同じ店舗」のレコードだけを紐付け対象にする。
+          //   旧: 別イベントに紐付き済みのレコードも奪っていたため、店舗移動で
+          //       元店舗の[キャンセル]イベント（同じ予約ID）が移動先予約をキャンセルに戻していた。
+          const evStore = ev.store || 'torihashi';
+          return r.id === descResId && !r.gcalEventId && (r.store || 'torihashi') === evStore;
         });
         if (match) {
           existing = match;
@@ -10326,8 +10329,10 @@ function transferReservationToStore(resId, targetStore, mode) {
   if (!orig) return;
   const targetLabel = targetStore === 'revolverd' ? '🥃 リボ' : '🐔 鳥はし';
   // 新しい予約データを作成（席・コースは初期化、ユーザーが後で調整）
+  // ★ 修正: 移動も新しいIDを発行する。
+  //   旧: 移動は同じIDのまま → 元店舗の[キャンセル]イベントと予約IDが重複し、同期で再キャンセルされていた。
   const newId = (mode === 'move')
-    ? orig.id              // 同じIDで移動
+    ? ('M' + genId().substring(1))  // 移動も新規ID（元IDは movedFrom に記録）
     : ('R' + genId().substring(1)); // コピーは新規ID
   const defaultCourse = targetStore === 'revolverd' ? 'RS' : 'S';
   const newRes = Object.assign({}, orig, {
@@ -10339,7 +10344,11 @@ function transferReservationToStore(resId, targetStore, mode) {
     gcalEventId: undefined,
     createdAt: Date.now(),
     // ★ 値上げ対応：店舗移動/コピーでも元予約の価格区分を引き継ぐ
-    priceVersion: usesNewCoursePrice(orig) ? 'v2' : 'v1'
+    priceVersion: usesNewCoursePrice(orig) ? 'v2' : 'v1',
+    movedFrom: orig.id,
+    status: 'confirmed',
+    _needsGcalResend: undefined,
+    _needsGcalUpdate: undefined
   });
 
   if (mode === 'move') {
