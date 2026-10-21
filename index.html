@@ -3812,7 +3812,7 @@ function bindStaffMonthSwipe(grid) {
 }
 
 // ★ バイト管理タブ：カレンダー下の「指定日の予定」をスワイプで日送り
-//   右スワイプ → 翌日 ／ 左スワイプ → 前日（ご指定どおり）
+//   左スワイプ → 翌日 ／ 右スワイプ → 前日（月カレンダーと同じ向き）
 //   月をまたぐ場合はカレンダーの表示月も自動で切替える。
 function shiftStaffMonthDay(delta) {
   const cur = _staffMonthCalState.selectedDate;
@@ -3845,7 +3845,7 @@ function bindStaffDayDetailSwipe() {
     const dy = t.clientY - sy;
     // 横方向に50px以上・縦より大きく動いた時だけ（縦スクロールと誤反応しないように）
     if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      shiftStaffMonthDay(dx > 0 ? 1 : -1);
+      shiftStaffMonthDay(dx < 0 ? 1 : -1); // 左スワイプ→翌日／右スワイプ→前日（月カレンダーと同じ向き）
     }
   }, { passive: true });
 }
@@ -3934,7 +3934,7 @@ function renderStaffMonthDayDetail(dateStr) {
   const wd = ['日','月','火','水','木','金','土'];
   const d = new Date(dateStr + 'T00:00:00');
   const label = (d.getMonth() + 1) + '/' + d.getDate() + '（' + wd[d.getDay()] + '）';
-  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">右スワイプ→翌日／左→前日</span></div>'
+  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">左スワイプ→翌日／右→前日</span></div>'
     + '<div class="smd-body"><div class="smd-empty">読み込み中...</div></div>';
 
   fetchStaffSchedule(dateStr, currentStore, function(items) {
