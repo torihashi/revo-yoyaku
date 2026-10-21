@@ -3811,6 +3811,45 @@ function bindStaffMonthSwipe(grid) {
   }, { passive: true });
 }
 
+// ★ バイト管理タブ：カレンダー下の「指定日の予定」をスワイプで日送り
+//   右スワイプ → 翌日 ／ 左スワイプ → 前日（ご指定どおり）
+//   月をまたぐ場合はカレンダーの表示月も自動で切替える。
+function shiftStaffMonthDay(delta) {
+  const cur = _staffMonthCalState.selectedDate;
+  if (!cur) return;
+  const d = new Date(cur + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  const next = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  _staffMonthCalState.selectedDate = next;
+  _staffMonthCalState.year = d.getFullYear();
+  _staffMonthCalState.month = d.getMonth() + 1;
+  renderStaffMonthCal(); // 表示月の再描画＋選択日の予定を再表示（キャッシュがあれば即時）
+}
+
+function bindStaffDayDetailSwipe() {
+  const panel = document.getElementById('staffMonthDayDetail');
+  if (!panel || panel._daySwipeBound) return;
+  panel._daySwipeBound = true;
+  let sx = 0, sy = 0, started = false;
+  panel.addEventListener('touchstart', function(e) {
+    if (e.touches.length !== 1) return;
+    sx = e.touches[0].clientX;
+    sy = e.touches[0].clientY;
+    started = true;
+  }, { passive: true });
+  panel.addEventListener('touchend', function(e) {
+    if (!started) return;
+    started = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - sx;
+    const dy = t.clientY - sy;
+    // 横方向に50px以上・縦より大きく動いた時だけ（縦スクロールと誤反応しないように）
+    if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      shiftStaffMonthDay(dx > 0 ? 1 : -1);
+    }
+  }, { passive: true });
+}
+
 function bindLongPress(el, onLongPress) {
   let timer = null;
   let fired = false;
@@ -3891,10 +3930,11 @@ function renderStaffMonthDayDetail(dateStr) {
     return;
   }
   panel.classList.remove('hidden');
+  bindStaffDayDetailSwipe(); // ★ スワイプで日送り
   const wd = ['日','月','火','水','木','金','土'];
   const d = new Date(dateStr + 'T00:00:00');
   const label = (d.getMonth() + 1) + '/' + d.getDate() + '（' + wd[d.getDay()] + '）';
-  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">ボタンで編集・削除</span></div>'
+  panel.innerHTML = '<div class="smd-head"><span>' + label + ' の予定</span><span style="font-size:11px;color:var(--muted);">右スワイプ→翌日／左→前日</span></div>'
     + '<div class="smd-body"><div class="smd-empty">読み込み中...</div></div>';
 
   fetchStaffSchedule(dateStr, currentStore, function(items) {
