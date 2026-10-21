@@ -5920,8 +5920,20 @@ function optimisticAddStaffShift(date, store, item) {
 }
 
 // タイムカード（出退勤実績）取得
+// ★ 高速化: 直近の結果をメモリにキャッシュし、即時表示に使う（裏で毎回最新化）
+const _timecardCache = {};   // key → { items, ts }
+function _getCachedTimecard(date, store) {
+  const c = _timecardCache[_staffKey(date, store)];
+  return c ? c.items : null;
+}
 function fetchTimecard(date, store, callback) {
   if (!isWebhookConfigured()) { if (callback) callback([]); return; }
+  const _tcKey = _staffKey(date, store);
+  const _origCb = callback;
+  callback = function(items) {
+    _timecardCache[_tcKey] = { items: items || [], ts: Date.now() };
+    if (_origCb) _origCb(items);
+  };
   const url = WEBHOOK_URL
     + '?action=listTimecard'
     + '&secret=' + encodeURIComponent(WEBHOOK_SECRET)
@@ -5981,15 +5993,29 @@ function renderStaffRail() {
     });
   } catch (e) {}
 
+  // ★ 高速化＋店舗切替時の取り違え防止
+  //   旧: シフト予定とタイムカードの両方が揃うまで「読み込み中」→ タイムカードは毎回通信で遅い。
+  //       さらに店舗を素早く切替えると、遅れて届いた反対店舗の結果で上書きされていた。
+  //   新: ①キャッシュがあれば即表示 ②届いた順に再描画 ③最新の描画要求（店舗・日付一致）以外は破棄
+  const myToken = ++_staffRailSeq;
+  const myStore = currentStore;
+  const isCurrent = function() {
+    return myToken === _staffRailSeq && myStore === currentStore && date === (smState.date || todayStr());
+  };
+  let sched = null;
+  let tc = _getCachedTimecard(date, myStore);
+  const tryDraw = function() {
+    if (!isCurrent() || sched === null) return;
+    _drawStaffRailContent(sched, tc || [], myStore);
+  };
   _setStaffRailHtml('<div class="staff-empty">読み込み中...</div>');
+  fetchStaffSchedule(date, myStore, function(items) { sched = items || []; tryDraw(); });
+  fetchTimecard(date, myStore, function(items) { tc = items || []; tryDraw(); });
+}
 
-  // 並行取得：カレンダーのシフト予定 + タイムカード実績
-  Promise.all([
-    new Promise(function(resolve) { fetchStaffSchedule(date, currentStore, resolve); }),
-    new Promise(function(resolve) { fetchTimecard(date, currentStore, resolve); })
-  ]).then(function(results) {
-    const shifts = results[0] || [];
-    const timecards = results[1] || [];
+var _staffRailSeq = 0;
+function _drawStaffRailContent(shifts, timecards, railStore) {
+  {
 
     // 名前で突合：タイムカード実績があれば優先表示
     const tcByName = {};
@@ -6110,12 +6136,12 @@ function renderStaffRail() {
             e.stopPropagation();
             const id = btn.getAttribute('data-shift-id');
             const name = btn.getAttribute('data-shift-name');
-            deleteStaffShiftEvent(id, currentStore, name);
+            deleteStaffShiftEvent(id, railStore, name);
           });
         });
       });
     }
-  });
+  }
 }
 
 function syncFromWebhook(callback) {
